@@ -1,10 +1,10 @@
 {
   "name": "vue-idle-xiuxian",
   "private": true,
-  "version": "1.0.5",
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "vite --open --port 2025",
+    "dev": "vite --open --host 0.0.0.0 --port 2025",
     "build": "vite build",
     "preview": "vite preview --open --port 2026"
   },

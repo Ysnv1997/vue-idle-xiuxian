@@ -1,4 +1,4 @@
-# 我的放置仙途
+# 修仙大世界
 
 <p align="center">
     <img src="https://i0.hdslb.com/bfs/article/c5bd547efa79470ccaab206c22b694c48941412.png" width="400">
@@ -79,7 +79,7 @@ docker compose up -d postgres redis backend
 
 ```bash
 # .env
-VITE_API_BASE_URL=http://localhost:8081
+VITE_API_BASE_URL=/api/v1
 # 可选：无 OAuth 配置时使用后端 dev 登录
 VITE_AUTO_DEV_LOGIN=false
 ```
@@ -90,12 +90,12 @@ VITE_AUTO_DEV_LOGIN=false
 # backend/.env
 LINUX_DO_CLIENT_ID=你的 client id
 LINUX_DO_CLIENT_SECRET=你的 client secret
-LINUX_DO_REDIRECT_URL=http://localhost:8081/auth/linux-do/callback
+LINUX_DO_REDIRECT_URL=http://localhost:8081/api/v1/auth/linux-do/callback
 FRONTEND_LOGIN_SUCCESS_URL=http://localhost:2025/#/auth/callback
 FRONTEND_LOGIN_FAILURE_URL=http://localhost:2025/#/auth/callback
 ```
 
-后端已提供 `GET /auth/linux-do/authorize`、`GET /auth/linux-do/callback`、`GET /player/snapshot`、`POST /game/cultivation/*`、`POST /game/exploration/start`、`POST /game/alchemy/craft`、`POST /game/gacha/draw`、`POST /game/inventory/*` 等迁移期接口。
+后端接口统一前缀为 `/api/v1`，例如 `GET /api/v1/auth/linux-do/authorize`、`GET /api/v1/player/snapshot`、`POST /api/v1/game/cultivation/*`。
 
 ## 鸣谢
 
@@ -108,14 +108,14 @@ FRONTEND_LOGIN_FAILURE_URL=http://localhost:2025/#/auth/callback
 
 ## 版权声明
 
-Copyright © 2025 我的放置仙途
+Copyright © 2025 修仙大世界
 
 本项目采用 MIT 许可证。详情请参阅 LICENSE 文件。
 
 ```
 MIT License
 
-版权所有 (c) 2025 我的放置仙途
+版权所有 (c) 2025 修仙大世界
 
 特此免费授予任何获得本软件和相关文档文件（"软件"）副本的人不受限制地处理本软件的权利，
 包括但不限于使用、复制、修改、合并、发布、分发、再许可和/或出售本软件副本的权利，

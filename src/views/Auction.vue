@@ -1,6 +1,12 @@
 <template>
-  <div class="auction-container">
-    <n-card title="拍卖行">
+  <section class="page-view auction-view">
+    <header class="page-head">
+      <p class="page-eyebrow">坊市交易</p>
+      <h2>拍卖行</h2>
+      <p class="page-desc">上架物品、参与竞价，并管理自己的订单。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card">
       <template #header-extra>
         <n-space>
           <n-button :loading="auctionStore.loading" @click="refresh">刷新</n-button>
@@ -157,7 +163,7 @@
         </n-grid>
       </n-space>
     </n-card>
-  </div>
+  </section>
 </template>
 
 <script setup>
@@ -335,9 +341,3 @@
     refresh()
   })
 </script>
-
-<style scoped>
-  .auction-container {
-    margin: 0 auto;
-  }
-</style>

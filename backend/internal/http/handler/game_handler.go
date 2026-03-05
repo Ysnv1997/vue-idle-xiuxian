@@ -583,11 +583,19 @@ func (h *GameHandler) respondWithAchievementSync(c *gin.Context, userID uuid.UUI
 func (h *GameHandler) handleGameError(c *gin.Context, err error) {
 	var insufficientSpiritError *service.InsufficientSpiritError
 	if errors.As(err, &insufficientSpiritError) {
-		c.JSON(http.StatusBadRequest, gin.H{
+		payload := gin.H{
 			"error":          "insufficient spirit",
 			"requiredSpirit": insufficientSpiritError.Required,
 			"currentSpirit":  insufficientSpiritError.Current,
-		})
+		}
+		if insufficientSpiritError.RegenRate > 0 {
+			payload["spiritRegenRate"] = insufficientSpiritError.RegenRate
+		}
+		if insufficientSpiritError.RetryAfterSeconds > 0 {
+			payload["retryAfterSeconds"] = insufficientSpiritError.RetryAfterSeconds
+			payload["retryAfterMs"] = insufficientSpiritError.RetryAfterSeconds * 1000
+		}
+		c.JSON(http.StatusBadRequest, payload)
 		return
 	}
 

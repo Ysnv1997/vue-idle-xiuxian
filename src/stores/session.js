@@ -58,7 +58,7 @@ export const useSessionStore = defineStore('session', {
     },
     redirectToLinuxDoLogin() {
       const callbackURL = `${window.location.origin}${window.location.pathname}#/auth/callback`
-      const authorizeURL = new URL(`${API_BASE_URL}/auth/linux-do/authorize`)
+      const authorizeURL = new URL(`${API_BASE_URL}/auth/linux-do/authorize`, window.location.origin)
       authorizeURL.searchParams.set('redirect', callbackURL)
       window.location.href = authorizeURL.toString()
     },
@@ -90,8 +90,15 @@ export const useSessionStore = defineStore('session', {
       return true
     },
     async logout() {
-      await logout()
-      this.clearSession()
+      let remoteLoggedOut = true
+      try {
+        await logout()
+      } catch (error) {
+        remoteLoggedOut = false
+      } finally {
+        this.clearSession()
+      }
+      return remoteLoggedOut
     }
   }
 })

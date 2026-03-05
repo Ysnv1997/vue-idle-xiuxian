@@ -1,19 +1,29 @@
 <template>
-  <n-space class="home-container" vertical>
-    <n-space justify="center">
-      <h2>感谢游玩我的放置仙途</h2>
-    </n-space>
-    <n-space justify="center">
-      <p>开始你的修仙之旅吧！</p>
-    </n-space>
-    <n-space justify="center" v-if="showLoginButton">
-      <n-button type="primary" @click="sessionStore.redirectToLinuxDoLogin">使用 Linux.do 登录</n-button>
-    </n-space>
-    <n-space justify="center" v-if="showLoginStatus">
-      <n-tag type="success">已登录：{{ sessionStore.user?.username || '道友' }}</n-tag>
-      <n-button tertiary @click="logout">退出登录</n-button>
-    </n-space>
-  </n-space>
+  <section class="page-view home-view">
+    <header class="page-head">
+      <p class="page-eyebrow">初入仙途</p>
+      <h2>欢迎</h2>
+      <p class="page-desc">感谢游玩《修仙大世界》，开始你的修仙之旅吧。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card">
+      <n-space class="home-content" vertical>
+        <n-space justify="center">
+          <h3>感谢游玩修仙大世界</h3>
+        </n-space>
+        <n-space justify="center">
+          <p>开始你的修仙之旅吧！</p>
+        </n-space>
+        <n-space justify="center" v-if="showLoginButton">
+          <n-button type="primary" @click="sessionStore.redirectToLinuxDoLogin">使用 Linux.do 登录</n-button>
+        </n-space>
+        <n-space justify="center" v-if="showLoginStatus">
+          <n-tag type="success">已登录：{{ sessionStore.user?.username || '道友' }}</n-tag>
+          <n-button tertiary @click="logout">退出登录</n-button>
+        </n-space>
+      </n-space>
+    </n-card>
+  </section>
 </template>
 
 <script setup>
@@ -35,16 +45,27 @@
 </script>
 
 <style scoped>
-  .home-container {
-    padding: 2rem;
+  .home-content {
+    min-height: 220px;
+    justify-content: center;
   }
 
-  .home-container h2 {
-    margin-bottom: 1rem;
-    color: #2080f0;
+  .home-content h3 {
+    margin-bottom: 8px;
+    color: var(--ink-main);
+    font-family: var(--font-display);
+    font-size: 28px;
+    text-align: center;
   }
 
-  .home-container p {
-    color: #666;
+  .home-content p {
+    color: var(--ink-sub);
+    font-size: 15px;
+  }
+
+  @media (max-width: 768px) {
+    .home-content h3 {
+      font-size: 24px;
+    }
   }
 </style>

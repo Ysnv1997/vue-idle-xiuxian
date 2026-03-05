@@ -11,24 +11,27 @@ import (
 )
 
 type Dependencies struct {
-	TokenService   *service.TokenService
-	AuthHandler    *handler.AuthHandler
-	PlayerHandler  *handler.PlayerHandler
-	GameHandler    *handler.GameHandler
-	RankingHandler *handler.RankingHandler
-	AuctionHandler *handler.AuctionHandler
-	ChatHandler    *handler.ChatHandler
+	TokenService    *service.TokenService
+	AuthHandler     *handler.AuthHandler
+	PlayerHandler   *handler.PlayerHandler
+	GameHandler     *handler.GameHandler
+	RankingHandler  *handler.RankingHandler
+	AuctionHandler  *handler.AuctionHandler
+	ChatHandler     *handler.ChatHandler
+	RechargeHandler *handler.RechargeHandler
 }
 
 func New(deps Dependencies) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery(), gin.Logger(), corsMiddleware())
 
-	engine.GET("/healthz", func(c *gin.Context) {
+	api := engine.Group("/api/v1")
+
+	api.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	auth := engine.Group("/auth")
+	auth := api.Group("/auth")
 	{
 		auth.GET("/linux-do/authorize", deps.AuthHandler.LinuxDoAuthorize)
 		auth.GET("/linux-do/callback", deps.AuthHandler.LinuxDoCallback)
@@ -37,9 +40,11 @@ func New(deps Dependencies) *gin.Engine {
 		auth.POST("/logout", deps.AuthHandler.Logout)
 	}
 
-	engine.GET("/chat/connect", deps.ChatHandler.Connect)
+	api.GET("/chat/connect", deps.ChatHandler.Connect)
+	api.GET("/recharge/callback/credit-linux-do", deps.RechargeHandler.CreditLinuxDoCallback)
+	api.POST("/recharge/callback/credit-linux-do", deps.RechargeHandler.CreditLinuxDoCallback)
 
-	authed := engine.Group("/")
+	authed := api.Group("/")
 	authed.Use(middleware.Auth(deps.TokenService))
 	{
 		authed.GET("/auth/me", deps.AuthHandler.Me)
@@ -66,6 +71,11 @@ func New(deps Dependencies) *gin.Engine {
 		authed.GET("/chat/admin/block-words", deps.ChatHandler.AdminBlockWords)
 		authed.POST("/chat/admin/block-words", deps.ChatHandler.AdminUpsertBlockWord)
 		authed.DELETE("/chat/admin/block-words", deps.ChatHandler.AdminDeleteBlockWord)
+		authed.GET("/recharge/products", deps.RechargeHandler.Products)
+		authed.GET("/recharge/orders", deps.RechargeHandler.Orders)
+		authed.POST("/recharge/orders", deps.RechargeHandler.CreateOrder)
+		authed.POST("/recharge/orders/mock-paid", deps.RechargeHandler.MockPaid)
+		authed.POST("/recharge/orders/sync", deps.RechargeHandler.SyncOrder)
 		authed.POST("/game/cultivation/once", deps.GameHandler.CultivationOnce)
 		authed.POST("/game/cultivation/until-breakthrough", deps.GameHandler.CultivationUntilBreakthrough)
 		authed.POST("/game/breakthrough", deps.GameHandler.Breakthrough)

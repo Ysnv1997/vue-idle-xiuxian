@@ -36,8 +36,10 @@ type CultivationActionResult struct {
 }
 
 type InsufficientSpiritError struct {
-	Required float64
-	Current  float64
+	Required          float64
+	Current           float64
+	RegenRate         float64
+	RetryAfterSeconds int64
 }
 
 func (e *InsufficientSpiritError) Error() string {
@@ -67,7 +69,12 @@ func (s *GameService) CultivateOnce(ctx context.Context, userID uuid.UUID) (*Cul
 
 	spiritCost := currentCultivationCost(state.Level)
 	if state.Spirit < float64(spiritCost) {
-		return nil, &InsufficientSpiritError{Required: float64(spiritCost), Current: state.Spirit}
+		return nil, &InsufficientSpiritError{
+			Required:          float64(spiritCost),
+			Current:           state.Spirit,
+			RegenRate:         state.SpiritRate,
+			RetryAfterSeconds: estimateSpiritRetryAfterSeconds(float64(spiritCost), state.Spirit, state.SpiritRate),
+		}
 	}
 
 	gain := currentCultivationGain(state.Level)
@@ -134,7 +141,12 @@ func (s *GameService) CultivateUntilBreakthrough(ctx context.Context, userID uui
 	spiritCostPerTime := currentCultivationCost(state.Level)
 	totalSpiritCost := spiritCostPerTime * times
 	if state.Spirit < float64(totalSpiritCost) {
-		return nil, &InsufficientSpiritError{Required: float64(totalSpiritCost), Current: state.Spirit}
+		return nil, &InsufficientSpiritError{
+			Required:          float64(totalSpiritCost),
+			Current:           state.Spirit,
+			RegenRate:         state.SpiritRate,
+			RetryAfterSeconds: estimateSpiritRetryAfterSeconds(float64(totalSpiritCost), state.Spirit, state.SpiritRate),
+		}
 	}
 
 	totalGain := int64(0)
@@ -371,4 +383,22 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func estimateSpiritRetryAfterSeconds(required float64, current float64, spiritRate float64) int64 {
+	if required <= current {
+		return 1
+	}
+	if spiritRate <= 0 {
+		return 3
+	}
+	missing := required - current
+	seconds := int64(math.Ceil(missing / spiritRate))
+	if seconds < 1 {
+		return 1
+	}
+	if seconds > 24*60*60 {
+		return 24 * 60 * 60
+	}
+	return seconds
 }

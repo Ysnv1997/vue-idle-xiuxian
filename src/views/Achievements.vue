@@ -1,54 +1,53 @@
 <template>
-  <n-layout>
-    <n-layout-header bordered>
-      <n-page-header>
-        <template #title>成就系统</template>
-      </n-page-header>
-    </n-layout-header>
-    <n-layout-content>
-      <n-card :bordered="false">
-        <n-tabs type="line">
-          <n-tab-pane
-            v-for="category in achievementCategories"
-            :key="category.key"
-            :name="category.key"
-            :tab="category.name"
-          >
-            <n-space vertical>
-              <n-grid :cols="2" :x-gap="12" :y-gap="8">
-                <n-grid-item v-for="achievement in category.achievements" :key="achievement.id">
-                  <n-card
-                    :class="{ completed: isAchievementCompleted(achievement.id) }"
-                    size="small"
-                    hoverable
-                    @click="showAchievementDetails(achievement)"
-                  >
-                    <template #header>
-                      <n-space justify="space-between" align="center">
-                        <span>{{ achievement.name }}</span>
-                        <n-tag :type="isAchievementCompleted(achievement.id) ? 'success' : 'default'">
-                          {{ isAchievementCompleted(achievement.id) ? '已完成' : '未完成' }}
-                        </n-tag>
-                      </n-space>
-                    </template>
-                    <p>{{ achievement.description }}</p>
-                    <n-progress
-                      type="line"
-                      :percentage="getProgress(achievement)"
-                      :color="isAchievementCompleted(achievement.id) ? '#18a058' : '#2080f0'"
-                      :height="8"
-                      :border-radius="4"
-                      :show-indicator="true"
-                    />
-                  </n-card>
-                </n-grid-item>
-              </n-grid>
-            </n-space>
-          </n-tab-pane>
-        </n-tabs>
-      </n-card>
-    </n-layout-content>
-  </n-layout>
+  <section class="page-view achievements-view">
+    <header class="page-head">
+      <p class="page-eyebrow">道途记录</p>
+      <h2>成就系统</h2>
+      <p class="page-desc">查看当前修真生涯的阶段目标与奖励进度。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card">
+      <n-tabs type="line">
+        <n-tab-pane
+          v-for="category in achievementCategories"
+          :key="category.key"
+          :name="category.key"
+          :tab="category.name"
+        >
+          <n-space vertical>
+            <n-grid :cols="2" :x-gap="12" :y-gap="8">
+              <n-grid-item v-for="achievement in category.achievements" :key="achievement.id">
+                <n-card
+                  :class="{ completed: isAchievementCompleted(achievement.id) }"
+                  size="small"
+                  hoverable
+                  @click="showAchievementDetails(achievement)"
+                >
+                  <template #header>
+                    <n-space justify="space-between" align="center">
+                      <span>{{ achievement.name }}</span>
+                      <n-tag :type="isAchievementCompleted(achievement.id) ? 'success' : 'default'">
+                        {{ isAchievementCompleted(achievement.id) ? '已完成' : '未完成' }}
+                      </n-tag>
+                    </n-space>
+                  </template>
+                  <p>{{ achievement.description }}</p>
+                  <n-progress
+                    type="line"
+                    :percentage="getProgress(achievement)"
+                    :color="isAchievementCompleted(achievement.id) ? '#18a058' : '#2080f0'"
+                    :height="8"
+                    :border-radius="4"
+                    :show-indicator="true"
+                  />
+                </n-card>
+              </n-grid-item>
+            </n-grid>
+          </n-space>
+        </n-tab-pane>
+      </n-tabs>
+    </n-card>
+  </section>
 </template>
 
 <script setup>

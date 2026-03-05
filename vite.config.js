@@ -11,6 +11,16 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version)
   },
   base: './',
+  server: {
+    allowedHosts: ['xnnd3k.test.notifyx.cn'],
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8081',
+        changeOrigin: true,
+        ws: true
+      }
+    }
+  },
   build: {
     outDir: 'docs',
     minify: 'terser',

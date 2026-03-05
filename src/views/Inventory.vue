@@ -1,13 +1,13 @@
 <template>
-  <n-layout>
-    <n-layout-header bordered>
-      <n-page-header>
-        <template #title>背包</template>
-      </n-page-header>
-    </n-layout-header>
-    <n-layout-content>
-      <n-card :bordered="false">
-        <n-tabs type="line">
+  <section class="page-view inventory-view">
+    <header class="page-head">
+      <p class="page-eyebrow">洞府藏物</p>
+      <h2>背包</h2>
+      <p class="page-desc">管理装备、灵草、丹药、丹方和灵宠。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card">
+      <n-tabs type="line">
           <n-tab-pane name="equipment" tab="装备">
             <n-grid :cols="2" :x-gap="12" :y-gap="8">
               <n-grid-item v-for="(name, type) in equipmentTypes" :key="type">
@@ -190,10 +190,9 @@
             </n-grid>
             <n-empty v-else />
           </n-tab-pane>
-        </n-tabs>
-      </n-card>
-    </n-layout-content>
-  </n-layout>
+      </n-tabs>
+    </n-card>
+  </section>
   <!-- 灵宠详情弹窗 -->
   <n-modal v-model:show="showPetModal" preset="dialog" title="灵宠详情" style="width: 600px">
     <template v-if="selectedPet">

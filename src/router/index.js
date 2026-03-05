@@ -11,7 +11,7 @@ import Gacha from '../views/Gacha.vue'
 import AuthCallback from '../views/AuthCallback.vue'
 import Ranking from '../views/Ranking.vue'
 import Auction from '../views/Auction.vue'
-import Chat from '../views/Chat.vue'
+import Recharge from '../views/Recharge.vue'
 
 const routes = [
   {
@@ -71,8 +71,12 @@ const routes = [
   },
   {
     path: '/chat',
-    name: 'Chat',
-    component: Chat
+    redirect: '/cultivation'
+  },
+  {
+    path: '/recharge',
+    name: 'Recharge',
+    component: Recharge
   },
   {
     path: '/auth/callback',

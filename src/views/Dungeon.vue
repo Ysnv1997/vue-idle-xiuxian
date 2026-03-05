@@ -1,8 +1,14 @@
 <template>
-  <div class="dungeon-container">
-    <n-card title="秘境探索">
-      <template #header-extra>
-        <n-space>
+  <section class="page-view dungeon-view">
+    <header class="page-head">
+      <p class="page-eyebrow">秘境试炼</p>
+      <h2>秘境探索</h2>
+      <p class="page-desc">选择难度后进入战斗流程，并在层间挑选增益。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card">
+      <n-space vertical>
+        <n-space class="control-row" align="center" justify="space-between">
           <n-select
             v-model:value="playerStore.dungeonDifficulty"
             @update:value="handleUpdateValue"
@@ -19,8 +25,6 @@
             开始探索
           </n-button>
         </n-space>
-      </template>
-      <n-space vertical>
         <!-- 层数显示 -->
         <n-statistic label="当前层数" :value="dungeonState.floor" />
         <!-- 选项界面 -->
@@ -49,7 +53,7 @@
           </div>
         </n-card>
         <!-- 战斗界面 -->
-        <template v-if="dungeonState.inCombat && dungeonState.combatManager">
+        <template v-if="dungeonState.combatManager">
           <n-card :bordered="false">
             <n-divider>
               {{ dungeonState.combatManager.round }} / {{ dungeonState.combatManager.maxRounds }}回合
@@ -285,11 +289,11 @@
         </template>
       </n-space>
     </n-card>
-  </div>
+  </section>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { usePlayerStore } from '../stores/player'
 import LogPanel from '../components/LogPanel.vue'
@@ -336,11 +340,88 @@ const dungeonState = ref({
 
 const combatLog = ref([])
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+const battleLogIntervalMs = 480
+const battleActionHoldMs = 220
 
 const pushDungeonLog = content => {
   if (!content) return
   const type = content.includes('失败') || content.includes('损失') ? 'error' : content.includes('获得') ? 'success' : 'info'
   logRef.value?.addLog(type, content)
+}
+
+const parseDamageFromLog = content => {
+  const matched = String(content || '').match(/造成([0-9]+(?:\.[0-9]+)?)点伤害/)
+  return matched ? Number(matched[1]) : 0
+}
+
+const parseVampireHealFromLog = content => {
+  const matched = String(content || '').match(/吸血恢复([0-9]+(?:\.[0-9]+)?)点生命值/)
+  return matched ? Number(matched[1]) : 0
+}
+
+const clampHealth = (value, maxHealth) => {
+  return Math.max(0, Math.min(Number(maxHealth || 0), Number(value || 0)))
+}
+
+const clearCombatFlags = () => {
+  playerAttacking.value = false
+  playerHurt.value = false
+  enemyAttacking.value = false
+  enemyHurt.value = false
+}
+
+const applyCombatPlaybackFromLog = content => {
+  const text = String(content || '')
+  const isAttackLog = text.includes('率先发起攻击') || text.includes('进行攻击')
+  if (!isAttackLog || !dungeonState.value.combatManager) {
+    return false
+  }
+
+  const isPlayerAttack = text.includes('修士')
+  const wasDodged = text.includes('被闪避')
+  const damage = wasDodged ? 0 : parseDamageFromLog(text)
+  const vampireHeal = parseVampireHealFromLog(text)
+  const manager = dungeonState.value.combatManager
+
+  clearCombatFlags()
+  if (isPlayerAttack) {
+    playerAttacking.value = true
+    if (!wasDodged) {
+      enemyHurt.value = true
+      manager.enemy.currentHealth = clampHealth(manager.enemy.currentHealth - damage, manager.enemy.stats.maxHealth)
+    }
+    if (vampireHeal > 0) {
+      manager.player.currentHealth = clampHealth(manager.player.currentHealth + vampireHeal, manager.player.stats.maxHealth)
+    }
+  } else {
+    enemyAttacking.value = true
+    if (!wasDodged) {
+      playerHurt.value = true
+      manager.player.currentHealth = clampHealth(
+        manager.player.currentHealth - damage,
+        manager.player.stats.maxHealth
+      )
+    }
+    if (vampireHeal > 0) {
+      manager.enemy.currentHealth = clampHealth(manager.enemy.currentHealth + vampireHeal, manager.enemy.stats.maxHealth)
+    }
+  }
+  return true
+}
+
+const playServerCombatLogs = async logs => {
+  const items = Array.isArray(logs) ? logs : []
+  for (const logContent of items) {
+    const hasAction = applyCombatPlaybackFromLog(logContent)
+    pushDungeonLog(logContent)
+    if (hasAction) {
+      await sleep(battleActionHoldMs)
+      clearCombatFlags()
+      await sleep(Math.max(0, battleLogIntervalMs - battleActionHoldMs))
+    } else {
+      await sleep(battleLogIntervalMs)
+    }
+  }
 }
 
 const buildServerDisplayStats = source => ({
@@ -464,6 +545,7 @@ const applyServerOptionState = result => {
 }
 
 const resetDungeonViewState = () => {
+  clearCombatFlags()
   dungeonState.value = {
     ...dungeonState.value,
     inCombat: false,
@@ -489,7 +571,7 @@ const runServerTurns = async initialResult => {
     }
 
     const turnLogs = Array.isArray(turnResult?.logs) ? turnResult.logs : []
-    turnLogs.forEach(pushDungeonLog)
+    await playServerCombatLogs(turnLogs)
 
     if (turnResult?.state === 'option_required' || turnResult?.needsOption) {
       applyServerOptionState(turnResult)
@@ -509,6 +591,7 @@ const runServerTurns = async initialResult => {
     if (turnResult?.state === 'defeat') {
       dungeonState.value.inCombat = false
       serverDungeonRunning.value = false
+      clearCombatFlags()
       message.error(turnResult?.message || `在第 ${dungeonState.value.floor} 层被击败了...`)
       return
     }
@@ -539,6 +622,7 @@ const runServerDungeon = async () => {
   await sleep(0)
   if (startResult?.message) {
     pushDungeonLog(startResult.message)
+    await sleep(260)
   }
 
   if (startResult?.state === 'option_required' || startResult?.needsOption) {
@@ -572,6 +656,8 @@ const startDungeon = async () => {
   try {
     isSubmitting.value = true
     serverDungeonRunning.value = false
+    resetDungeonViewState()
+    logRef.value?.clearLogs()
     infoShow.value = false
     infoType.value = ''
     await runServerDungeon()
@@ -590,9 +676,6 @@ const startDungeon = async () => {
       message.error(error?.message || '秘境探索失败')
     }
   } finally {
-    if (!serverDungeonRunning.value) {
-      resetDungeonViewState()
-    }
     isSubmitting.value = false
   }
 }
@@ -617,9 +700,6 @@ const selectOption = async option => {
       message.error(error?.message || '选择增益失败')
     }
   } finally {
-    if (!serverDungeonRunning.value) {
-      resetDungeonViewState()
-    }
     isSubmitting.value = false
   }
 }
@@ -687,17 +767,14 @@ const handleRefreshOptions = async () => {
       message.error(error?.message || '刷新增益失败')
     }
   } finally {
-    if (!serverDungeonRunning.value) {
-      resetDungeonViewState()
-    }
     isSubmitting.value = false
   }
 }
 </script>
 
 <style scoped>
-  .dungeon-container {
-    margin: 0 auto;
+  .control-row {
+    width: 100%;
   }
 
   .option-cards {
@@ -918,6 +995,26 @@ const handleRefreshOptions = async () => {
     }
     100% {
       transform: translateX(0) rotate(0deg);
+    }
+  }
+
+  @media (max-width: 960px) {
+    .control-row {
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .option-cards {
+      flex-direction: column;
+    }
+
+    .option-card {
+      width: 100%;
+    }
+
+    .combat-scene {
+      flex-direction: column;
+      gap: 14px;
     }
   }
 </style>

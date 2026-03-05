@@ -1,10 +1,18 @@
 <template>
-  <n-card title="登录处理中">
-    <n-space vertical>
-      <n-text>正在同步登录状态，请稍候...</n-text>
-      <n-text v-if="error" type="error">登录失败：{{ error }}</n-text>
-    </n-space>
-  </n-card>
+  <section class="page-view auth-view">
+    <header class="page-head">
+      <p class="page-eyebrow">身份校验</p>
+      <h2>登录处理中</h2>
+      <p class="page-desc">正在同步登录状态，请稍候。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card">
+      <n-space vertical>
+        <n-text>正在同步登录状态，请稍候...</n-text>
+        <n-text v-if="error" type="error">登录失败：{{ error }}</n-text>
+      </n-space>
+    </n-card>
+  </section>
 </template>
 
 <script setup>

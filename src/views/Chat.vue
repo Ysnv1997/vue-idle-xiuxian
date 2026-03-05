@@ -1,6 +1,12 @@
 <template>
-  <div class="chat-container">
-    <n-card title="聊天">
+  <section class="page-view chat-view">
+    <header class="page-head">
+      <p class="page-eyebrow">传音台</p>
+      <h2>聊天</h2>
+      <p class="page-desc">查看频道消息、发送聊天内容与管理违禁词。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card">
       <template #header-extra>
         <n-space>
           <n-tag :type="chatStore.connected ? 'success' : 'warning'" size="small">
@@ -172,7 +178,7 @@
         </n-space>
       </n-space>
     </n-card>
-  </div>
+  </section>
 </template>
 
 <script setup>
@@ -393,10 +399,6 @@
 </script>
 
 <style scoped>
-  .chat-container {
-    margin: 0 auto;
-  }
-
   .chat-log {
     border: 1px solid rgba(127, 127, 127, 0.2);
     border-radius: 6px;

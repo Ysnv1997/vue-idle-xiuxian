@@ -1,15 +1,27 @@
 <template>
-  <div class="ranking-container">
-    <n-card title="排行榜">
-      <template #header-extra>
-        <n-space>
+  <section class="page-view ranking-view">
+    <header class="page-head">
+      <p class="page-eyebrow">天机榜单</p>
+      <h2>排行榜</h2>
+      <p class="page-desc">查看全服与好友排行，支持关注与取关。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card">
+      <n-space vertical>
+        <n-space class="ranking-toolbar" align="center" justify="space-between">
           <n-select v-model:value="rankingType" :options="rankingOptions" style="width: 160px" :disabled="loading" />
           <n-select v-model:value="rankingScope" :options="scopeOptions" style="width: 140px" :disabled="loading" />
-          <n-input-number v-model:value="limit" :min="10" :max="100" :step="10" style="width: 100px" :disabled="loading" />
+          <n-input-number
+            v-model:value="limit"
+            :min="10"
+            :max="100"
+            :step="10"
+            style="width: 100px"
+            :disabled="loading"
+          />
           <n-button type="primary" :loading="loading" @click="refreshAll">刷新</n-button>
         </n-space>
-      </template>
-      <n-space vertical>
+
         <n-card size="small" title="我的关注">
           <n-spin :show="loadingFollows">
             <n-empty v-if="follows.length === 0" description="暂无关注，去全服榜点击关注即可加入好友榜。" />
@@ -79,7 +91,7 @@
         </n-spin>
       </n-space>
     </n-card>
-  </div>
+  </section>
 </template>
 
 <script setup>
@@ -239,8 +251,10 @@
 </script>
 
 <style scoped>
-  .ranking-container {
-    margin: 0 auto;
+  .ranking-toolbar {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 10px;
   }
 
   .follow-list {

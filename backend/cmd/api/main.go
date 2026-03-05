@@ -50,13 +50,26 @@ func main() {
 	rankingService := service.NewRankingService(pool)
 	auctionService := service.NewAuctionService(pool, userRepo)
 	chatService := service.NewChatService(pool, userRepo)
+	rechargeService := service.NewRechargeService(
+		pool,
+		userRepo,
+		service.RechargeEPayConfig{
+			PID:       cfg.RechargeEPayPID,
+			Key:       cfg.RechargeEPayKey,
+			BaseURL:   cfg.RechargeEPayBaseURL,
+			NotifyURL: cfg.RechargeNotifyURL,
+			ReturnURL: cfg.RechargeReturnURL,
+		},
+	)
 	startAuctionSweepWorker(ctx, auctionService, cfg.AuctionSweepTTL, cfg.AuctionSweepMax)
+	startChatCleanupWorker(ctx, chatService, cfg.ChatCleanupTTL, cfg.ChatRetentionTTL, cfg.ChatRetentionMax)
 
 	authHandler := handler.NewAuthHandler(cfg, authService, userRepo)
 	playerHandler := handler.NewPlayerHandler(userRepo)
 	rankingHandler := handler.NewRankingHandler(rankingService)
 	auctionHandler := handler.NewAuctionHandler(auctionService)
 	chatHandler := handler.NewChatHandler(chatService, tokenService, cfg.ChatAdminUserIDs)
+	rechargeHandler := handler.NewRechargeHandler(rechargeService, cfg.EnableRechargeMock)
 	gameHandler := handler.NewGameHandler(
 		gameService,
 		explorationService,
@@ -69,13 +82,14 @@ func main() {
 	)
 
 	engine := httprouter.New(httprouter.Dependencies{
-		TokenService:   tokenService,
-		AuthHandler:    authHandler,
-		PlayerHandler:  playerHandler,
-		GameHandler:    gameHandler,
-		RankingHandler: rankingHandler,
-		AuctionHandler: auctionHandler,
-		ChatHandler:    chatHandler,
+		TokenService:    tokenService,
+		AuthHandler:     authHandler,
+		PlayerHandler:   playerHandler,
+		GameHandler:     gameHandler,
+		RankingHandler:  rankingHandler,
+		AuctionHandler:  auctionHandler,
+		ChatHandler:     chatHandler,
+		RechargeHandler: rechargeHandler,
 	})
 
 	httpServer := &http.Server{
@@ -132,6 +146,57 @@ func startAuctionSweepWorker(ctx context.Context, auctionService *service.Auctio
 				return
 			case <-ticker.C:
 				runSweep()
+			}
+		}
+	}()
+}
+
+func startChatCleanupWorker(
+	ctx context.Context,
+	chatService *service.ChatService,
+	interval time.Duration,
+	retentionTTL time.Duration,
+	maxMessages int,
+) {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	if retentionTTL <= 0 {
+		retentionTTL = 10 * time.Minute
+	}
+	if maxMessages <= 0 {
+		maxMessages = 500
+	}
+
+	runCleanup := func() {
+		runCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		result, err := chatService.Cleanup(runCtx, retentionTTL, maxMessages)
+		if err != nil {
+			log.Printf("chat cleanup failed: %v", err)
+			return
+		}
+		if result != nil && (result.DeletedExpired > 0 || result.DeletedOverflow > 0) {
+			log.Printf(
+				"chat cleanup deleted expired=%d overflow=%d",
+				result.DeletedExpired,
+				result.DeletedOverflow,
+			)
+		}
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		runCleanup()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runCleanup()
 			}
 		}
 	}()

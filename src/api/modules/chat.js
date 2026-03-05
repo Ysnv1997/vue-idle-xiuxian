@@ -65,8 +65,18 @@ export async function deleteChatBlockedWord(word) {
 }
 
 export function buildChatWSURL(accessToken) {
-  const origin = API_BASE_URL.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
+  const origin = resolveWSBaseURL(API_BASE_URL)
   const params = new URLSearchParams()
   params.set('accessToken', accessToken)
   return `${origin}/chat/connect?${params.toString()}`
+}
+
+function resolveWSBaseURL(apiBaseURL) {
+  if (/^https?:\/\//i.test(apiBaseURL)) {
+    return apiBaseURL.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:')
+  }
+
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const normalizedPath = apiBaseURL.startsWith('/') ? apiBaseURL : `/${apiBaseURL}`
+  return `${wsProtocol}//${window.location.host}${normalizedPath}`
 }

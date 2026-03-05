@@ -1,13 +1,13 @@
 <template>
-  <n-layout>
-    <n-layout-header bordered>
-      <n-page-header>
-        <template #title>抽奖系统</template>
-      </n-page-header>
-    </n-layout-header>
-    <n-layout-content class="gacha-content">
-      <n-card :bordered="false">
-        <div class="gacha-container">
+  <section class="page-view gacha-view">
+    <header class="page-head">
+      <p class="page-eyebrow">机缘阁</p>
+      <h2>抽奖系统</h2>
+      <p class="page-desc">消耗灵石抽取装备与灵宠，支持心愿单与自动处理策略。</p>
+    </header>
+
+    <n-card :bordered="false" class="page-card gacha-content">
+      <div class="gacha-container">
           <div class="gacha-type-selector">
             <n-radio-group v-model:value="gachaType" name="gachaType">
               <n-radio-button value="all">综合池</n-radio-button>
@@ -408,15 +408,14 @@
               </n-space>
             </template>
           </n-modal>
-        </div>
-      </n-card>
-    </n-layout-content>
-  </n-layout>
+      </div>
+    </n-card>
+</section>
 </template>
 
 <script setup>
   import { usePlayerStore } from '../stores/player'
-  import { ref } from 'vue'
+  import { computed, ref } from 'vue'
   import { useMessage } from 'naive-ui'
   import { Help, HeartOutline, SettingsOutline } from '@vicons/ionicons5'
   import { drawGacha } from '../api/modules/game'

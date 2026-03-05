@@ -96,6 +96,11 @@ type ChatMuteListResult struct {
 	Mutes []ChatMuteRecord `json:"mutes"`
 }
 
+type ChatCleanupResult struct {
+	DeletedExpired  int64 `json:"deletedExpired"`
+	DeletedOverflow int64 `json:"deletedOverflow"`
+}
+
 type ChatBlockedWord struct {
 	Word      string    `json:"word"`
 	Enabled   bool      `json:"enabled"`
@@ -271,6 +276,59 @@ func (s *ChatService) Send(ctx context.Context, userID uuid.UUID, channel string
 		return nil, fmt.Errorf("insert chat message: %w", err)
 	}
 	return message, nil
+}
+
+func (s *ChatService) Cleanup(ctx context.Context, retentionTTL time.Duration, maxMessages int) (*ChatCleanupResult, error) {
+	if retentionTTL <= 0 {
+		retentionTTL = 10 * time.Minute
+	}
+	if maxMessages <= 0 {
+		maxMessages = 500
+	}
+
+	cutoff := time.Now().UTC().Add(-retentionTTL)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin chat cleanup transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const deleteExpiredSQL = `
+		DELETE FROM chat_messages
+		WHERE created_at < $1
+	`
+	tag, err := tx.Exec(ctx, deleteExpiredSQL, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("delete expired chat messages: %w", err)
+	}
+	deletedExpired := tag.RowsAffected()
+
+	const deleteOverflowSQL = `
+		WITH overflow AS (
+			SELECT id
+			FROM chat_messages
+			ORDER BY created_at DESC, id DESC
+			OFFSET $1
+		)
+		DELETE FROM chat_messages cm
+		USING overflow
+		WHERE cm.id = overflow.id
+	`
+	tag, err = tx.Exec(ctx, deleteOverflowSQL, maxMessages)
+	if err != nil {
+		return nil, fmt.Errorf("delete overflow chat messages: %w", err)
+	}
+	deletedOverflow := tag.RowsAffected()
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit chat cleanup transaction: %w", err)
+	}
+
+	return &ChatCleanupResult{
+		DeletedExpired:  deletedExpired,
+		DeletedOverflow: deletedOverflow,
+	}, nil
 }
 
 func (s *ChatService) Report(ctx context.Context, reporterID uuid.UUID, messageID int64, reason string) error {
