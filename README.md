@@ -60,6 +60,43 @@ npm run dev
 npm run build
 ```
 
+## 前后端迁移开发（Phase 0/1）
+
+### 本地环境变量
+
+```bash
+cp .env.example .env
+cp backend/.env.example backend/.env
+```
+
+### 启动基础服务（PostgreSQL + Redis + Backend）
+
+```bash
+docker compose up -d postgres redis backend
+```
+
+### 前端联调模式
+
+```bash
+# .env
+VITE_API_BASE_URL=http://localhost:8081
+# 可选：无 OAuth 配置时使用后端 dev 登录
+VITE_AUTO_DEV_LOGIN=false
+```
+
+### Linux.do OAuth 联调（可选）
+
+```bash
+# backend/.env
+LINUX_DO_CLIENT_ID=你的 client id
+LINUX_DO_CLIENT_SECRET=你的 client secret
+LINUX_DO_REDIRECT_URL=http://localhost:8081/auth/linux-do/callback
+FRONTEND_LOGIN_SUCCESS_URL=http://localhost:2025/#/auth/callback
+FRONTEND_LOGIN_FAILURE_URL=http://localhost:2025/#/auth/callback
+```
+
+后端已提供 `GET /auth/linux-do/authorize`、`GET /auth/linux-do/callback`、`GET /player/snapshot`、`POST /game/cultivation/*`、`POST /game/exploration/start`、`POST /game/alchemy/craft`、`POST /game/gacha/draw`、`POST /game/inventory/*` 等迁移期接口。
+
 ## 鸣谢
 
 感谢以下开源项目的支持：

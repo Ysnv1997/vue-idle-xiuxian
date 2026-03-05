@@ -289,332 +289,410 @@
 </template>
 
 <script setup>
-  import { ref } from 'vue'
-  import { usePlayerStore } from '../stores/player'
-  import { getRealmName } from '../plugins/realm'
-  import { CombatManager, CombatEntity, generateEnemy, CombatType } from '../plugins/combat'
-  import { getRandomOptions } from '../plugins/dungeon'
-  import dungeonBuffs from '../plugins/dungeonBuffs'
-  import { useMessage } from 'naive-ui'
-  import LogPanel from '../components/LogPanel.vue'
+import { ref } from 'vue'
+import { useMessage } from 'naive-ui'
+import { usePlayerStore } from '../stores/player'
+import LogPanel from '../components/LogPanel.vue'
+import { dungeonStart, dungeonNextTurn } from '../api/modules/game'
 
-  const playerStore = usePlayerStore()
-  const message = useMessage()
-  const logRef = ref(null)
-  const playerAttacking = ref(false)
-  const playerHurt = ref(false)
-  const enemyAttacking = ref(false)
-  const enemyHurt = ref(false)
-  const infoShow = ref(false)
-  const infoType = ref('')
+const playerStore = usePlayerStore()
+const message = useMessage()
+const logRef = ref(null)
 
-  const floorData = computed(() => {
-    switch (playerStore.dungeonDifficulty) {
-      case 1:
-        return playerStore.dungeonHighestFloor
-      case 2:
-        return playerStore.dungeonHighestFloor_2
-      case 5:
-        return playerStore.dungeonHighestFloor_5
-      case 10:
-        return playerStore.dungeonHighestFloor_10
-      case 100:
-        return playerStore.dungeonHighestFloor_100
-      default:
-        return playerStore.dungeonHighestFloor
-    }
+const playerAttacking = ref(false)
+const playerHurt = ref(false)
+const enemyAttacking = ref(false)
+const enemyHurt = ref(false)
+const infoShow = ref(false)
+const infoType = ref('')
+const isSubmitting = ref(false)
+const serverDungeonRunning = ref(false)
+const refreshNumber = ref(3)
+
+const floorData = computed(() => {
+  switch (playerStore.dungeonDifficulty) {
+    case 1:
+      return playerStore.dungeonHighestFloor
+    case 2:
+      return playerStore.dungeonHighestFloor_2
+    case 5:
+      return playerStore.dungeonHighestFloor_5
+    case 10:
+      return playerStore.dungeonHighestFloor_10
+    case 100:
+      return playerStore.dungeonHighestFloor_100
+    default:
+      return playerStore.dungeonHighestFloor
+  }
+})
+
+const dungeonState = ref({
+  floor: floorData.value,
+  inCombat: false,
+  showingOptions: false,
+  currentOptions: [],
+  combatManager: null
+})
+
+const combatLog = ref([])
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+const pushDungeonLog = content => {
+  if (!content) return
+  const type = content.includes('失败') || content.includes('损失') ? 'error' : content.includes('获得') ? 'success' : 'info'
+  logRef.value?.addLog(type, content)
+}
+
+const buildServerDisplayStats = source => ({
+  maxHealth: Number(source.maxHealth ?? 1),
+  damage: Number(source.damage ?? 0),
+  defense: Number(source.defense ?? 0),
+  speed: Number(source.speed ?? 0),
+  critRate: Number(source.critRate ?? 0),
+  comboRate: Number(source.comboRate ?? 0),
+  counterRate: Number(source.counterRate ?? 0),
+  stunRate: Number(source.stunRate ?? 0),
+  dodgeRate: Number(source.dodgeRate ?? 0),
+  vampireRate: Number(source.vampireRate ?? 0),
+  critResist: Number(source.critResist ?? 0),
+  comboResist: Number(source.comboResist ?? 0),
+  counterResist: Number(source.counterResist ?? 0),
+  stunResist: Number(source.stunResist ?? 0),
+  dodgeResist: Number(source.dodgeResist ?? 0),
+  vampireResist: Number(source.vampireResist ?? 0),
+  healBoost: Number(source.healBoost ?? 0),
+  critDamageBoost: Number(source.critDamageBoost ?? 0),
+  critDamageReduce: Number(source.critDamageReduce ?? 0),
+  finalDamageBoost: Number(source.finalDamageBoost ?? 0),
+  finalDamageReduce: Number(source.finalDamageReduce ?? 0),
+  combatBoost: Number(source.combatBoost ?? 0),
+  resistanceBoost: Number(source.resistanceBoost ?? 0)
+})
+
+const createServerCombatManager = floor => {
+  const safeFloor = Math.max(1, Number(floor) || 1)
+  const safeDifficulty = Math.max(1, Number(playerStore.dungeonDifficulty) || 1)
+  const playerStats = buildServerDisplayStats({
+    maxHealth: playerStore.baseAttributes.health,
+    damage: playerStore.baseAttributes.attack,
+    defense: playerStore.baseAttributes.defense,
+    speed: playerStore.baseAttributes.speed,
+    critRate: playerStore.combatAttributes.critRate,
+    comboRate: playerStore.combatAttributes.comboRate,
+    counterRate: playerStore.combatAttributes.counterRate,
+    stunRate: playerStore.combatAttributes.stunRate,
+    dodgeRate: playerStore.combatAttributes.dodgeRate,
+    vampireRate: playerStore.combatAttributes.vampireRate,
+    critResist: playerStore.combatResistance.critResist,
+    comboResist: playerStore.combatResistance.comboResist,
+    counterResist: playerStore.combatResistance.counterResist,
+    stunResist: playerStore.combatResistance.stunResist,
+    dodgeResist: playerStore.combatResistance.dodgeResist,
+    vampireResist: playerStore.combatResistance.vampireResist,
+    healBoost: playerStore.specialAttributes.healBoost,
+    critDamageBoost: playerStore.specialAttributes.critDamageBoost,
+    critDamageReduce: playerStore.specialAttributes.critDamageReduce,
+    finalDamageBoost: playerStore.specialAttributes.finalDamageBoost,
+    finalDamageReduce: playerStore.specialAttributes.finalDamageReduce,
+    combatBoost: playerStore.specialAttributes.combatBoost,
+    resistanceBoost: playerStore.specialAttributes.resistanceBoost
   })
 
-  // 副本状态
-  const dungeonState = ref({
-    floor: floorData.value,
+  const enemyName = safeFloor % 10 === 0 ? '秘境首领' : safeFloor % 5 === 0 ? '秘境精英' : '秘境敌人'
+  const enemyStats = buildServerDisplayStats({
+    maxHealth: 100 + safeDifficulty * safeFloor * 200,
+    damage: 8 + safeDifficulty * safeFloor * 2,
+    defense: 3 + safeDifficulty * safeFloor * 2,
+    speed: 5 + safeDifficulty * safeFloor * 2,
+    critRate: 0.05 + safeDifficulty * safeFloor * 0.02,
+    comboRate: 0.03 + safeDifficulty * safeFloor * 0.02,
+    counterRate: 0.03 + safeDifficulty * safeFloor * 0.02,
+    stunRate: 0.02 + safeDifficulty * safeFloor * 0.01,
+    dodgeRate: 0.05 + safeDifficulty * safeFloor * 0.02,
+    vampireRate: 0.02 + safeDifficulty * safeFloor * 0.01,
+    critResist: 0.02 + safeDifficulty * safeFloor * 0.01,
+    comboResist: 0.02 + safeDifficulty * safeFloor * 0.01,
+    counterResist: 0.02 + safeDifficulty * safeFloor * 0.01,
+    stunResist: 0.02 + safeDifficulty * safeFloor * 0.01,
+    dodgeResist: 0.02 + safeDifficulty * safeFloor * 0.01,
+    vampireResist: 0.02 + safeDifficulty * safeFloor * 0.01,
+    healBoost: 0.05 + safeDifficulty * safeFloor * 0.02,
+    critDamageBoost: 0.2 + safeDifficulty * safeFloor * 0.1,
+    critDamageReduce: 0.1 + safeDifficulty * safeFloor * 0.05,
+    finalDamageBoost: 0.05 + safeDifficulty * safeFloor * 0.02,
+    finalDamageReduce: 0.05 + safeDifficulty * safeFloor * 0.02,
+    combatBoost: 0.03 + safeDifficulty * safeFloor * 0.02,
+    resistanceBoost: 0.03 + safeDifficulty * safeFloor * 0.02
+  })
+
+  return {
+    round: 1,
+    maxRounds: 10,
+    player: {
+      name: playerStore.name || '修士',
+      currentHealth: playerStats.maxHealth,
+      stats: playerStats
+    },
+    enemy: {
+      name: enemyName,
+      currentHealth: enemyStats.maxHealth,
+      stats: enemyStats
+    }
+  }
+}
+
+const normalizeDungeonOptions = options => {
+  if (!Array.isArray(options)) return []
+  return options
+    .map(option => ({
+      id: option?.id,
+      name: option?.name,
+      description: option?.description,
+      type: option?.type || 'common'
+    }))
+    .filter(option => option.id && option.name)
+}
+
+const applyServerOptionState = result => {
+  dungeonState.value.inCombat = false
+  dungeonState.value.showingOptions = true
+  dungeonState.value.currentOptions = normalizeDungeonOptions(result?.options)
+  refreshNumber.value = Number(result?.refreshCount ?? 0)
+  if (result?.message) {
+    pushDungeonLog(result.message)
+  }
+}
+
+const resetDungeonViewState = () => {
+  dungeonState.value = {
+    ...dungeonState.value,
     inCombat: false,
     showingOptions: false,
     currentOptions: [],
     combatManager: null
-  })
-
-  // 当前战斗日志
-  const combatLog = ref([])
-
-  // 根据选项类型获取颜色
-  const getOptionColor = type => {
-    const types = {
-      epic: {
-        name: '史诗',
-        color: '#e91e63'
-      },
-      rare: {
-        name: '稀有',
-        color: '#2196f3'
-      },
-      common: {
-        name: '普通',
-        color: '#4caf50'
-      }
-    }
-    return types[type]
   }
+}
 
-  // 创建玩家战斗实体
-  const createPlayerEntity = () => {
-    // 基础属性
-    const baseStats = {
-      health: playerStore.baseAttributes.health,
-      damage: playerStore.baseAttributes.attack,
-      defense: playerStore.baseAttributes.defense,
-      speed: playerStore.baseAttributes.speed,
-      // 战斗属性
-      critRate: playerStore.combatAttributes.critRate,
-      comboRate: playerStore.combatAttributes.comboRate,
-      counterRate: playerStore.combatAttributes.counterRate,
-      stunRate: playerStore.combatAttributes.stunRate,
-      dodgeRate: playerStore.combatAttributes.dodgeRate,
-      vampireRate: playerStore.combatAttributes.vampireRate,
-      // 战斗抗性
-      critResist: playerStore.combatResistance.critResist,
-      comboResist: playerStore.combatResistance.comboResist,
-      counterResist: playerStore.combatResistance.counterResist,
-      stunResist: playerStore.combatResistance.stunResist,
-      dodgeResist: playerStore.combatResistance.dodgeResist,
-      vampireResist: playerStore.combatResistance.vampireResist,
-      // 特殊属性
-      healBoost: playerStore.specialAttributes.healBoost,
-      critDamageBoost: playerStore.specialAttributes.critDamageBoost,
-      critDamageReduce: playerStore.specialAttributes.critDamageReduce,
-      finalDamageBoost: playerStore.specialAttributes.finalDamageBoost,
-      finalDamageReduce: playerStore.specialAttributes.finalDamageReduce,
-      combatBoost: playerStore.specialAttributes.combatBoost,
-      resistanceBoost: playerStore.specialAttributes.resistanceBoost,
-      // 其他属性
-      spiritDamage: playerStore.spirit * 0.1,
-      maxHealth: playerStore.baseAttributes.health
+const runServerTurns = async initialResult => {
+  let pendingResult = initialResult || null
+  while (serverDungeonRunning.value) {
+    const turnResult = pendingResult || (await dungeonNextTurn())
+    pendingResult = null
+    if (turnResult?.snapshot) {
+      playerStore.applyServerSnapshot(turnResult.snapshot)
     }
-    const entity = new CombatEntity(playerStore.name, playerStore.level, baseStats, playerStore.realm)
-    // 应用所有激活的增益效果
-    const activeBuffs = dungeonBuffs.getActiveBuffs()
-    activeBuffs.forEach(buff => {
-      if (typeof buff.effect === 'function') {
-        buff.effect(entity)
-      }
-    })
-    return entity
-  }
 
-  // 开始新的副本
-  const startDungeon = () => {
-    const startingFloor = floorData.value
-    dungeonState.value = {
-      floor: startingFloor,
-      inCombat: false,
-      showingOptions: false,
-      currentOptions: [],
-      combatManager: null
+    const currentFloor = Number(turnResult?.floor ?? dungeonState.value.floor)
+    if (Number.isFinite(currentFloor) && currentFloor > 0) {
+      dungeonState.value.floor = currentFloor
+      dungeonState.value.combatManager = createServerCombatManager(currentFloor)
     }
-    playerStore.dungeonTotalRuns++ // 增加总探索次数
-    nextFloor()
-  }
 
-  // 进入下一层
-  const nextFloor = () => {
-    dungeonState.value = {
-      ...dungeonState.value,
-      floor: dungeonState.value.floor + 1
-    }
-    const floor = dungeonState.value.floor
-    // 检查是否需要显示选项
-    if (floor === 1 || floor % 5 === 0) {
-      const randRefres = Math.floor(Math.random() * 3) + 1
-      message.success(`获得了${randRefres}刷新次数`)
-      refreshNumber.value = randRefres
-      showOptions()
+    const turnLogs = Array.isArray(turnResult?.logs) ? turnResult.logs : []
+    turnLogs.forEach(pushDungeonLog)
+
+    if (turnResult?.state === 'option_required' || turnResult?.needsOption) {
+      applyServerOptionState(turnResult)
       return
     }
-    startCombat()
-  }
 
-  // 显示随机选项
-  const showOptions = () => {
-    dungeonState.value.showingOptions = true
-    dungeonState.value.currentOptions = getRandomOptions(dungeonState.value.floor)
-  }
-
-  // 选择选项
-  const selectOption = option => {
-    dungeonBuffs.apply(playerStore, option)
-    message.success(`选择了：${option.name}`)
     dungeonState.value.showingOptions = false
     dungeonState.value.currentOptions = []
-    startCombat()
+
+    if (turnResult?.state === 'victory') {
+      dungeonState.value.inCombat = true
+      message.success(turnResult?.message || `击败了第 ${dungeonState.value.floor} 层的敌人！`)
+      await sleep(180)
+      continue
+    }
+
+    if (turnResult?.state === 'defeat') {
+      dungeonState.value.inCombat = false
+      serverDungeonRunning.value = false
+      message.error(turnResult?.message || `在第 ${dungeonState.value.floor} 层被击败了...`)
+      return
+    }
+
+    if (turnResult?.message) {
+      pushDungeonLog(turnResult.message)
+    }
+    serverDungeonRunning.value = false
+    dungeonState.value.inCombat = false
+    return
+  }
+}
+
+const runServerDungeon = async () => {
+  const startResult = await dungeonStart(playerStore.dungeonDifficulty)
+  if (startResult?.snapshot) {
+    playerStore.applyServerSnapshot(startResult.snapshot)
+  }
+  const startFloor = Number(startResult?.currentFloor ?? floorData.value)
+  dungeonState.value = {
+    floor: startFloor,
+    inCombat: true,
+    showingOptions: false,
+    currentOptions: [],
+    combatManager: createServerCombatManager(startFloor + 1)
+  }
+  serverDungeonRunning.value = true
+  await sleep(0)
+  if (startResult?.message) {
+    pushDungeonLog(startResult.message)
   }
 
-  // 处理失败
-  const handleDefeat = () => {
-    dungeonState.value.inCombat = false
+  if (startResult?.state === 'option_required' || startResult?.needsOption) {
+    applyServerOptionState(startResult)
+    return
+  }
+
+  await runServerTurns()
+}
+
+const getOptionColor = type => {
+  const types = {
+    epic: {
+      name: '史诗',
+      color: '#e91e63'
+    },
+    rare: {
+      name: '稀有',
+      color: '#2196f3'
+    },
+    common: {
+      name: '普通',
+      color: '#4caf50'
+    }
+  }
+  return types[type]
+}
+
+const startDungeon = async () => {
+  if (isSubmitting.value) return
+  try {
+    isSubmitting.value = true
+    serverDungeonRunning.value = false
     infoShow.value = false
     infoType.value = ''
-    message.error(`在第 ${dungeonState.value.floor} 层被击败了...`)
-    playerStore.dungeonDeathCount++
-    // 清除所有临时增益效果
-    dungeonBuffs.clear(playerStore)
-    // 记录失败层数
-    playerStore.dungeonLastFailedFloor = dungeonState.value.floor
-    // 随机跌落境界或修为
-    if (playerStore.dungeonDifficulty !== 100) {
-      // 损失一定修为值作为惩罚
-      const cultivationLossRate = Math.random() * 0.4 + 0.1 // 随机10%到50%
-      const cultivationLoss = Math.floor(playerStore.cultivation * cultivationLossRate)
-      playerStore.cultivation = Math.max(0, playerStore.cultivation - cultivationLoss)
-      message.error(`战斗失败！损失了${cultivationLoss}点修为。`)
+    await runServerDungeon()
+  } catch (error) {
+    serverDungeonRunning.value = false
+    const code = error?.payload?.error
+    if (code === 'invalid dungeon difficulty') {
+      message.error('秘境难度无效，请重新选择')
+    } else if (code === 'dungeon run not active') {
+      message.error('当前没有进行中的秘境探索')
+    } else if (code === 'invalid dungeon option') {
+      message.error('增益选项无效，请重新选择')
+    } else if (code === 'dungeon refresh exhausted') {
+      message.error('刷新次数不足')
     } else {
-      // 跌落境界作为惩罚
-      const randomGradeLoss = Math.floor(Math.random() * 3) + 1 // 随机损失1-3个境界
-      const playerLevel = Math.max(1, playerStore.level - randomGradeLoss) // 降低境界
-      playerStore.level = playerLevel
-      playerStore.cultivation = 0 // 移除所有灵力
-      playerStore.maxCultivation = getRealmName(playerLevel).maxCultivation // 降低所需最大灵力值
-      message.error(`战斗失败！跌落了${playerLevel}个境界。`)
+      message.error(error?.message || '秘境探索失败')
     }
+  } finally {
+    if (!serverDungeonRunning.value) {
+      resetDungeonViewState()
+    }
+    isSubmitting.value = false
   }
+}
 
-  // 开始战斗
-  const startCombat = () => {
-    const floor = dungeonState.value.floor
-    const isBossFloor = floor % 10 === 0
-    const isEliteFloor = floor % 5 === 0
-    const enemyType = isBossFloor ? CombatType.BOSS : isEliteFloor ? CombatType.ELITE : CombatType.NORMAL
-    // 创建玩家战斗实体，并应用所有增益效果
-    const playerEntity = createPlayerEntity()
-    // 创建敌人
-    const enemy = generateEnemy(floor, enemyType, playerStore.dungeonDifficulty)
-    // 创建战斗管理器
-    dungeonState.value.combatManager = new CombatManager(playerEntity, enemy, log => {
-      if (logRef.value) {
-        logRef.value.addLog(log)
-      }
-    })
+const selectOption = async option => {
+  if (!serverDungeonRunning.value || isSubmitting.value) return
+  try {
+    isSubmitting.value = true
+    dungeonState.value.showingOptions = false
+    dungeonState.value.currentOptions = []
     dungeonState.value.inCombat = true
-    dungeonState.value.combatManager.start() // 初始化战斗状态
-    autoCombat() // 开始自动战斗
+    const turnResult = await dungeonNextTurn({ selectedOptionId: option.id })
+    await runServerTurns(turnResult)
+  } catch (error) {
+    const code = error?.payload?.error
+    if (code === 'invalid dungeon option') {
+      message.error('增益选项无效，请重新选择')
+    } else if (code === 'dungeon run not active') {
+      serverDungeonRunning.value = false
+      message.error('当前没有进行中的秘境探索')
+    } else {
+      message.error(error?.message || '选择增益失败')
+    }
+  } finally {
+    if (!serverDungeonRunning.value) {
+      resetDungeonViewState()
+    }
+    isSubmitting.value = false
   }
+}
 
-  // 自动战斗
-  const autoCombat = async () => {
-    while (dungeonState.value.inCombat) {
-      const result = dungeonState.value.combatManager.executeTurn()
-      const getCombatLog = dungeonState.value.combatManager.getCombatLog()
-      // 添加动画效果
-      if (result.attacker === dungeonState.value.combatManager.player) {
-        playerAttacking.value = true
-        enemyHurt.value = true
-        await new Promise(resolve => setTimeout(resolve, 500))
-        playerAttacking.value = false
-        enemyHurt.value = false
-      } else {
-        enemyAttacking.value = true
-        playerHurt.value = true
-        await new Promise(resolve => setTimeout(resolve, 500))
-        enemyAttacking.value = false
-        playerHurt.value = false
+const infoCliclk = type => {
+  infoShow.value = true
+  infoType.value = type
+}
+
+const dungeonOptions = [
+  {
+    label: '简单',
+    value: 1
+  },
+  {
+    label: '普通',
+    value: 2
+  },
+  {
+    label: '困难',
+    value: 5
+  },
+  {
+    label: '地狱',
+    value: 10
+  },
+  {
+    label: '通天',
+    value: 100
+  }
+]
+
+const handleUpdateValue = value => {
+  if (value === 100) {
+    message.warning('警告! 通天难度挑战失败后会跌落境界')
+  }
+}
+
+const handleRefreshOptions = async () => {
+  if (!serverDungeonRunning.value || isSubmitting.value || refreshNumber.value <= 0) return
+  try {
+    isSubmitting.value = true
+    const result = await dungeonNextTurn({ refreshOptions: true })
+    if (result?.snapshot) {
+      playerStore.applyServerSnapshot(result.snapshot)
+    }
+    if (result?.state === 'option_required' || result?.needsOption) {
+      dungeonState.value.showingOptions = true
+      dungeonState.value.currentOptions = normalizeDungeonOptions(result?.options)
+      refreshNumber.value = Number(result?.refreshCount ?? refreshNumber.value)
+      if (result?.message) {
+        pushDungeonLog(result.message)
       }
-      if (!result) break
-      // 更新战斗日志
-      getCombatLog.forEach(item => {
-        logRef.value?.addLog('info', item)
-      })
-      // 检查战斗是否结束
-      if (result.state === 'victory') {
-        handleVictory()
-        break
-      } else if (result.state === 'defeat') {
-        handleDefeat()
-        break
-      }
-      // 添加延迟使战斗动画更流畅
-      await new Promise(resolve => setTimeout(resolve, 500))
+      return
     }
-  }
-
-  // 处理胜利
-  const handleVictory = () => {
-    dungeonState.value.inCombat = false
-    message.success(`击败了第 ${dungeonState.value.floor} 层的敌人！`)
-    // 更新统计数据
-    playerStore.dungeonTotalKills++
-    if (dungeonState.value.floor % 10 === 0) {
-      playerStore.dungeonBossKills++
-    } else if (dungeonState.value.floor % 5 === 0) {
-      // 增加洗练石
-      playerStore.refinementStones += playerStore.dungeonDifficulty
-      playerStore.dungeonEliteKills++
-      message.success(`获得了${playerStore.dungeonDifficulty}颗洗练石`)
+    await runServerTurns(result)
+  } catch (error) {
+    const code = error?.payload?.error
+    if (code === 'dungeon refresh exhausted') {
+      message.error('刷新次数不足')
+    } else if (code === 'dungeon run not active') {
+      serverDungeonRunning.value = false
+      message.error('当前没有进行中的秘境探索')
+    } else {
+      message.error(error?.message || '刷新增益失败')
     }
-    // 更新最高层数记录
-    if (dungeonState.value.floor > playerStore.dungeonHighestFloor) {
-      playerStore.dungeonHighestFloor = dungeonState.value.floor
+  } finally {
+    if (!serverDungeonRunning.value) {
+      resetDungeonViewState()
     }
-    // 获得奖励
-    const rewards = generateRewards()
-    rewards.forEach(reward => {
-      playerStore.spiritStones += reward.amount
-      message.success(`获得了 ${reward.amount} 灵石！`)
-      playerStore.dungeonTotalRewards++
-    })
-    // 进入下一层
-    nextFloor()
+    isSubmitting.value = false
   }
-
-  // 生成奖励
-  const generateRewards = () => {
-    const rewards = []
-    // 灵石奖励
-    const baseStones = 10 * dungeonState.value.floor * playerStore.dungeonDifficulty
-    rewards.push({
-      type: 'spirit_stones',
-      amount: baseStones
-    })
-    return rewards
-  }
-
-  const infoCliclk = type => {
-    infoShow.value = true
-    infoType.value = type
-  }
-
-  const dungeonOptions = [
-    {
-      label: '简单',
-      value: 1
-    },
-    {
-      label: '普通',
-      value: 2
-    },
-    {
-      label: '困难',
-      value: 5
-    },
-    {
-      label: '地狱',
-      value: 10
-    },
-    {
-      label: '通天',
-      value: 100
-    }
-  ]
-
-  const handleUpdateValue = (value, option) => {
-    if (value === 100) {
-      message.warning('警告! 通天难度挑战失败后会跌落境界')
-    }
-  }
-  const refreshNumber = ref(3)
-  // 刷新选择
-  const handleRefreshOptions = () => {
-    showOptions()
-    refreshNumber.value--
-  }
+}
 </script>
 
 <style scoped>

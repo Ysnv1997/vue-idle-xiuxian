@@ -6,27 +6,31 @@
     <n-space justify="center">
       <p>开始你的修仙之旅吧！</p>
     </n-space>
-    <n-space justify="center" v-if="playerStore.isNewPlayer">
-      <n-button type="success" @click="receiveNewPlayerGift">领取新手礼包</n-button>
+    <n-space justify="center" v-if="showLoginButton">
+      <n-button type="primary" @click="sessionStore.redirectToLinuxDoLogin">使用 Linux.do 登录</n-button>
+    </n-space>
+    <n-space justify="center" v-if="showLoginStatus">
+      <n-tag type="success">已登录：{{ sessionStore.user?.username || '道友' }}</n-tag>
+      <n-button tertiary @click="logout">退出登录</n-button>
     </n-space>
   </n-space>
 </template>
 
 <script setup>
-  import { usePlayerStore } from '../stores/player'
+  import { computed } from 'vue'
+  import { useSessionStore } from '../stores/session'
   import { useMessage } from 'naive-ui'
   import { useRouter } from 'vue-router'
   const router = useRouter()
-  const playerStore = usePlayerStore()
+  const sessionStore = useSessionStore()
   const message = useMessage()
+  const showLoginButton = computed(() => !sessionStore.isAuthenticated)
+  const showLoginStatus = computed(() => sessionStore.isAuthenticated)
 
-  // 领取新手礼包
-  const receiveNewPlayerGift = () => {
-    playerStore.spiritStones += 20000
-    playerStore.isNewPlayer = false
-    router.push('/cultivation')
-    message.success('获得20000灵石')
-    message.success('新手礼包领取成功')
+  const logout = async () => {
+    await sessionStore.logout()
+    router.push('/')
+    message.success('已退出登录')
   }
 </script>
 

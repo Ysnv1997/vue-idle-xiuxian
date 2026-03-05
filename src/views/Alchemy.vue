@@ -65,7 +65,8 @@
         type="primary"
         block
         v-if="selectedRecipe"
-        :disabled="!selectedRecipe || !checkMaterials(selectedRecipe)"
+        :disabled="!selectedRecipe || !checkMaterials(selectedRecipe) || isSubmitting"
+        :loading="isSubmitting"
         @click="craftPill"
       >
         {{ !checkMaterials(selectedRecipe) ? '材料不足' : '开始炼制' }}
@@ -81,9 +82,11 @@
   import { pillRecipes, pillGrades, pillTypes, calculatePillEffect } from '../plugins/pills'
   import { herbs } from '../plugins/herbs'
   import LogPanel from '../components/LogPanel.vue'
+  import { craftAlchemyPill } from '../api/modules/game'
 
   const playerStore = usePlayerStore()
   const logRef = ref(null)
+  const isSubmitting = ref(false)
 
   // 当前选择的丹方
   const selectedRecipe = ref(null)
@@ -126,29 +129,49 @@
   })
 
   // 炼制丹药
-  const craftPill = () => {
+  const playCraftAnimation = success => {
+    const btn = document.querySelector('.craft-button')
+    if (!btn) return
+    if (success) {
+      btn.classList.add('success-animation')
+      setTimeout(() => {
+        btn.classList.remove('success-animation')
+      }, 1000)
+      return
+    }
+    btn.classList.add('fail-animation')
+    setTimeout(() => {
+      btn.classList.remove('fail-animation')
+    }, 1000)
+  }
+
+  const craftPill = async () => {
     if (!selectedRecipe.value) return
-    const result = playerStore.craftPill(selectedRecipe.value.id)
-    if (result.success) {
-      logRef.value?.addLog('success', '炼制成功！')
-      // 播放成功动画效果
-      const btn = document.querySelector('.craft-button')
-      if (btn) {
-        btn.classList.add('success-animation')
-        setTimeout(() => {
-          btn.classList.remove('success-animation')
-        }, 1000)
+    try {
+      isSubmitting.value = true
+      const result = await craftAlchemyPill(selectedRecipe.value.id)
+      if (result?.snapshot) {
+        playerStore.applyServerSnapshot(result.snapshot)
       }
-    } else {
-      logRef.value?.addLog('error', `炼制失败：${result.message}`)
-      // 播放失败动画效果
-      const btn = document.querySelector('.craft-button')
-      if (btn) {
-        btn.classList.add('fail-animation')
-        setTimeout(() => {
-          btn.classList.remove('fail-animation')
-        }, 1000)
+      if (result?.success) {
+        logRef.value?.addLog('success', result.message || '炼制成功！')
+        playCraftAnimation(true)
+      } else {
+        logRef.value?.addLog('error', `炼制失败：${result?.message || '炼制失败'}`)
+        playCraftAnimation(false)
       }
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'recipe locked') {
+        logRef.value?.addLog('error', '炼制失败：未掌握该丹方')
+      } else if (code === 'insufficient materials') {
+        logRef.value?.addLog('error', '炼制失败：材料不足')
+      } else {
+        logRef.value?.addLog('error', `炼制失败：${error?.message || '请求失败'}`)
+      }
+      playCraftAnimation(false)
+    } finally {
+      isSubmitting.value = false
     }
   }
 </script>

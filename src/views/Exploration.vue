@@ -29,7 +29,8 @@
                     <n-button
                       type="primary"
                       @click="exploreLocation(location)"
-                      :disabled="playerStore.spirit < location.spiritCost || isAutoExploring"
+                      :disabled="playerStore.spirit < location.spiritCost || isAutoExploring || isSubmitting"
+                      :loading="isSubmitting"
                     >
                       探索
                     </n-button>
@@ -40,7 +41,8 @@
                       "
                       :disabled="
                         playerStore.spirit < location.spiritCost ||
-                        (isAutoExploring && !exploringLocations[location.id])
+                        (isAutoExploring && !exploringLocations[location.id]) ||
+                        isSubmitting
                       "
                     >
                       {{ exploringLocations[location.id] ? '停止' : '自动' }}
@@ -81,8 +83,8 @@
   import { CompassOutline } from '@vicons/ionicons5'
   import { getRealmName } from '../plugins/realm'
   import { locations } from '../plugins/locations'
-  import { triggerRandomEvent, getRandomReward, handleReward } from '../plugins/events'
   import LogPanel from '../components/LogPanel.vue'
+  import { startExploration } from '../api/modules/game'
 
   const logRef = ref(null)
   const playerStore = usePlayerStore()
@@ -92,74 +94,49 @@
   const explorationTimers = ref({}) // 记录每个地点的定时器
   const isAutoExploring = ref(false) // 是否有地点正在自动探索
   const autoExploringLocationId = ref(null) // 正在自动探索的地点ID
-  const explorationWorker = ref(null)
-
-  // 初始化 Web Worker
-  const initWorker = () => {
-    explorationWorker.value = new Worker(new URL('../workers/exploration.js', import.meta.url), { type: 'module' })
-    explorationWorker.value.onmessage = ({ data }) => {
-      if (data.type === 'exploration_result') {
-        handleExplorationResult(data)
-      } else if (data.type === 'error') {
-        showMessage('error', data.message)
-      }
-    }
-  }
-
-  // 处理探索结果
-  const handleExplorationResult = result => {
-    playerStore.spirit -= result.spiritCost
-    playerStore.explorationCount++
-
-    if (result.eventTriggered) {
-      if (triggerRandomEvent(playerStore, showMessage)) {
-        showMessage('info', '你的福缘不错，触发了一个特殊事件！')
-      }
-    } else {
-      const location = availableLocations.value.find(loc => loc.spiritCost === result.spiritCost)
-      if (location && Array.isArray(location.rewards)) {
-        const reward = getRandomReward(location.rewards)
-        if (reward) {
-          if (result.rewardMultiplier > 1) {
-            reward.amount = Math.floor(reward.amount * result.rewardMultiplier)
-            showMessage('success', '福缘加持，获得了更多奖励！')
-          }
-          handleReward(reward, playerStore, showMessage)
-        }
-      } else {
-        showMessage('error', '无法获取探索奖励，请检查地点配置')
-      }
-    }
-    playerStore.saveData()
-  }
+  const isSubmitting = ref(false)
 
   // 探索指定地点
-  const exploreLocation = location => {
+  const exploreLocation = async location => {
     if (playerStore.spirit < location.spiritCost) {
       showMessage('error', '灵力不足！')
       return
     }
-    explorationWorker.value.postMessage({
-      type: 'explore',
-      playerData: { luck: playerStore.luck },
-      location
-    })
-  }
-
-  // 组件挂载时初始化 Worker
-  onMounted(() => {
-    initWorker()
-  })
-
-  // 组件卸载时清理 Worker 和定时器
-  onUnmounted(() => {
-    if (explorationWorker.value) {
-      explorationWorker.value.terminate()
+    if (isSubmitting.value) return
+    try {
+      isSubmitting.value = true
+      const result = await startExploration(location.id)
+      if (result?.snapshot) {
+        playerStore.applyServerSnapshot(result.snapshot)
+      }
+      const messages = Array.isArray(result?.messages) ? result.messages : []
+      if (messages.length === 0) {
+        showMessage('success', '探索完成！')
+      } else {
+        messages.forEach(message => {
+          const type = message.includes('损失') ? 'error' : message.includes('触发') ? 'info' : 'success'
+          showMessage(type, message)
+        })
+      }
+    } catch (error) {
+      if (error?.payload?.error === 'insufficient spirit') {
+        showMessage('error', '灵力不足！')
+        stopAllAutoExploration()
+        return
+      }
+      if (error?.payload?.error === 'location locked') {
+        showMessage('error', `境界不足，需达到${error.payload.requiredLevel}级`)
+        return
+      }
+      if (error?.payload?.error === 'invalid location') {
+        showMessage('error', '地点不存在，请刷新后重试')
+        return
+      }
+      showMessage('error', error?.message || '探索失败！')
+    } finally {
+      isSubmitting.value = false
     }
-    Object.values(explorationTimers.value).forEach(timer => clearInterval(timer))
-    explorationTimers.value = {}
-    exploringLocations.value = {}
-  })
+  }
 
   // 获取可用地点列表
   const availableLocations = computed(() => {
@@ -169,6 +146,16 @@
   // 显示消息并处理重复
   const showMessage = (type, content) => {
     return logRef.value?.addLog(type, content)
+  }
+
+  const stopAllAutoExploration = () => {
+    Object.keys(explorationTimers.value).forEach(locationId => {
+      clearInterval(explorationTimers.value[locationId])
+      delete explorationTimers.value[locationId]
+      exploringLocations.value[locationId] = false
+    })
+    isAutoExploring.value = false
+    autoExploringLocationId.value = null
   }
 
   // 开始自动探索
@@ -198,11 +185,8 @@
     autoExploringLocationId.value = null
   }
 
-  // 组件卸载时清理所有定时器
   onUnmounted(() => {
-    Object.values(explorationTimers.value).forEach(timer => clearInterval(timer))
-    explorationTimers.value = {}
-    exploringLocations.value = {}
+    stopAllAutoExploration()
   })
 
   const clearLogPanel = () => {

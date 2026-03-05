@@ -1,0 +1,2 @@
+ALTER TABLE player_resources
+  ADD COLUMN IF NOT EXISTS pet_essence BIGINT NOT NULL DEFAULT 0;

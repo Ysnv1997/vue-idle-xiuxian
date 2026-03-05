@@ -163,6 +163,7 @@
 <script setup>
   import { useRouter, useRoute } from 'vue-router'
   import { usePlayerStore } from './stores/player'
+  import { useSessionStore } from './stores/session'
   import { h, ref } from 'vue'
   import { NIcon, darkTheme } from 'naive-ui'
   import {
@@ -175,8 +176,7 @@
     GiftOutlined,
     HomeOutlined,
     SmileOutlined,
-    AppstoreOutlined,
-    BugOutlined
+    AppstoreOutlined
   } from '@ant-design/icons-vue'
   import { Moon, Sunny, Flash } from '@vicons/ionicons5'
   import { getRealmName } from './plugins/realm'
@@ -184,16 +184,30 @@
   const router = useRouter()
   const route = useRoute()
   const playerStore = usePlayerStore()
-  const spiritWorker = ref(null)
+  const sessionStore = useSessionStore()
   const menuOptions = ref([])
   const isNewPlayer = ref(false)
   const isLoading = ref(true) // 添加加载状态
+  const snapshotSyncIntervalMs = 3000
+  let snapshotTimer = null
 
-  // 初始化数据加载
-  playerStore.initializePlayer().then(() => {
-    isLoading.value = false
-    getMenuOptions()
-  })
+  const bootstrapGame = async () => {
+    try {
+      await sessionStore.initializeSession()
+    } catch (error) {
+      console.error('初始化会话失败:', error)
+    }
+
+    try {
+      await playerStore.initializePlayer()
+    } finally {
+      isNewPlayer.value = playerStore.isNewPlayer
+      isLoading.value = false
+      getMenuOptions()
+    }
+  }
+
+  bootstrapGame()
 
   // 监听玩家状态
   watch(
@@ -206,12 +220,8 @@
     }
   )
 
-  // 灵力获取相关配置
-  const baseGainRate = 1 // 基础灵力获取率
-
   const getMenuOptions = () => {
     menuOptions.value = [
-      ,
       ...(isNewPlayer.value
         ? [
             {
@@ -257,36 +267,47 @@
         icon: renderIcon(TrophyOutlined)
       },
       {
+        label: '排行',
+        key: 'ranking',
+        icon: renderIcon(TrophyOutlined)
+      },
+      {
+        label: '拍卖',
+        key: 'auction',
+        icon: renderIcon(AppstoreOutlined)
+      },
+      {
+        label: '聊天',
+        key: 'chat',
+        icon: renderIcon(SmileOutlined)
+      },
+      {
         label: '设置',
         key: 'settings',
         icon: renderIcon(SettingOutlined)
-      },
-      ...(playerStore.isGMMode
-        ? [
-            {
-              label: 'GM调试',
-              key: 'gm',
-              icon: renderIcon(SmileOutlined)
-            }
-          ]
-        : [])
+      }
     ]
   }
-  // 自动获取灵力
-  const startAutoGain = () => {
-    if (spiritWorker.value) return
-    spiritWorker.value = new Worker(new URL('./workers/spirit.js', import.meta.url))
-    spiritWorker.value.onmessage = e => {
-      if (e.data.type === 'gain') {
-        playerStore.totalCultivationTime += 1
-        playerStore.gainSpirit(baseGainRate)
-      }
-    }
-    spiritWorker.value.postMessage({ type: 'start' })
+
+  const startSnapshotPolling = () => {
+    if (snapshotTimer) return
+    snapshotTimer = setInterval(() => {
+      playerStore.refreshSnapshot()
+    }, snapshotSyncIntervalMs)
+  }
+
+  const stopSnapshotPolling = () => {
+    if (!snapshotTimer) return
+    clearInterval(snapshotTimer)
+    snapshotTimer = null
   }
 
   onMounted(() => {
-    startAutoGain() // 启动自动获取灵力
+    startSnapshotPolling()
+  })
+
+  onUnmounted(() => {
+    stopSnapshotPolling()
   })
 
   // 图标

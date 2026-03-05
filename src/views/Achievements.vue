@@ -52,50 +52,94 @@
 </template>
 
 <script setup>
-  import { usePlayerStore } from '../stores/player'
-  import { achievements, getAchievementProgress } from '../plugins/achievements'
-  import { ref, onMounted } from 'vue'
+  import { computed, onMounted, ref } from 'vue'
   import { useMessage } from 'naive-ui'
-  import { checkAchievements } from '../plugins/achievements'
+
+  import { fetchAchievements, syncAchievements } from '../api/modules/achievements'
+  import { usePlayerStore } from '../stores/player'
+
+  const categoryNames = {
+    equipment: '装备成就',
+    dungeon_explore: '秘境探索',
+    dungeon_combat: '秘境战斗',
+    cultivation: '修炼成就',
+    breakthrough: '突破成就',
+    exploration: '探索成就',
+    collection: '收集成就',
+    resources: '资源成就',
+    alchemy: '炼丹成就'
+  }
 
   const playerStore = usePlayerStore()
   const message = useMessage()
 
-  // 检查成就完成情况
-  onMounted(() => {
-    const newlyCompletedAchievements = checkAchievements(playerStore)
-    // 显示新完成的成就
-    newlyCompletedAchievements.forEach(achievement => {
-      message.success(`恭喜解锁新成就：${achievement.name}！\n\n${achievement.description}`, { duration: 3000 })
+  const achievementCategories = ref([])
+
+  const achievementStatusMap = computed(() => {
+    const map = {}
+    achievementCategories.value.forEach(category => {
+      ;(category.achievements || []).forEach(achievement => {
+        map[achievement.id] = achievement
+      })
     })
+    return map
   })
 
-  // 获取所有成就类别
-  const achievementCategories = Object.entries(achievements).map(([key, value]) => ({
-    key,
-    name: getCategoryName(key),
-    achievements: value
-  }))
-
-  // 获取成就类别名称
-  const getCategoryName = category => {
-    const categoryNames = {
-      equipment: '装备成就',
-      dungeon_explore: '秘境探索',
-      dungeon_combat: '秘境战斗',
-      cultivation: '修炼成就',
-      breakthrough: '突破成就',
-      exploration: '探索成就',
-      collection: '收集成就',
-      resources: '资源成就',
-      alchemy: '炼丹成就'
-    }
+  function getCategoryName(category) {
     return categoryNames[category] || '其他成就'
   }
 
+  function applyServerAchievementPayload(payload) {
+    const categories = Array.isArray(payload?.categories) ? payload.categories : []
+    if (categories.length === 0) {
+      achievementCategories.value = []
+      return
+    }
+
+    achievementCategories.value = categories.map(category => ({
+      key: category.key,
+      name: category.name || getCategoryName(category.key),
+      achievements: Array.isArray(category.achievements) ? category.achievements : []
+    }))
+  }
+
+  async function loadServerAchievements(syncFirst = false) {
+    const response = syncFirst ? await syncAchievements() : await fetchAchievements()
+
+    if (response?.snapshot) {
+      playerStore.applyServerSnapshot(response.snapshot)
+    }
+
+    if (response?.achievements) {
+      applyServerAchievementPayload(response.achievements)
+    } else {
+      applyServerAchievementPayload(response)
+    }
+
+    return response
+  }
+
+  // 检查成就完成情况
+  onMounted(async () => {
+    try {
+      const syncResult = await loadServerAchievements(true)
+      ;(syncResult?.newlyCompleted || []).forEach(achievement => {
+        message.success(`恭喜解锁新成就：${achievement.name}！\n\n${achievement.description}`, { duration: 3000 })
+      })
+    } catch (error) {
+      console.error('同步成就失败:', error)
+      try {
+        await loadServerAchievements(false)
+      } catch (listError) {
+        console.error('加载成就列表失败:', listError)
+        message.error('加载成就失败，请稍后重试')
+      }
+    }
+  })
+
   // 检查成就是否完成
   const isAchievementCompleted = achievementId => {
-    return playerStore.completedAchievements.includes(achievementId)
+    return Boolean(achievementStatusMap.value[achievementId]?.completed)
   }
 
   // 显示成就详情
@@ -117,7 +161,7 @@
   // 获取成就进度
   const getProgress = achievement => {
     try {
-      const progress = getAchievementProgress(playerStore, achievement)
+      const progress = Number(achievementStatusMap.value[achievement.id]?.progress ?? 0)
       return Number.isFinite(progress) ? Math.min(100, Math.max(0, Math.round(progress))) : 0
     } catch (error) {
       console.error('成就进度报错:', error)

@@ -512,7 +512,19 @@
   import { getStatName, formatStatValue } from '../plugins/stats'
   import { getRealmName } from '../plugins/realm'
   import { pillRecipes, pillGrades, pillTypes, calculatePillEffect } from '../plugins/pills'
-  import { enhanceEquipment, reforgeEquipment } from '../plugins/equipment'
+  import {
+    inventorySellEquipment,
+    inventoryBatchSellEquipment,
+    inventoryReleasePet,
+    inventoryBatchReleasePets,
+    inventoryUpgradePet,
+    inventoryEvolvePet,
+    gameUseItem,
+    inventoryEquipEquipment,
+    inventoryUnequipEquipment,
+    inventoryEnhanceEquipment,
+    inventoryReforgeEquipment
+  } from '../api/modules/game'
 
   // 分页相关
   const currentPage = ref(1)
@@ -543,13 +555,47 @@
   const playerStore = usePlayerStore()
   const message = useMessage()
 
+  const findItemById = itemId => playerStore.items.find(item => String(item.id) === String(itemId))
+
+  const syncSelectionAfterSnapshot = () => {
+    if (selectedPet.value) {
+      const latestPet = findItemById(selectedPet.value.id)
+      selectedPet.value = latestPet || null
+      if (!latestPet) {
+        showPetModal.value = false
+      }
+    }
+    if (selectedEquipment.value) {
+      const latestEquipment = findItemById(selectedEquipment.value.id)
+      selectedEquipment.value = latestEquipment || null
+      if (!latestEquipment) {
+        showEquipmentDetailModal.value = false
+      }
+    }
+  }
+
+  const applyServerInventoryResult = result => {
+    if (result?.snapshot) {
+      playerStore.applyServerSnapshot(result.snapshot)
+      syncSelectionAfterSnapshot()
+    }
+  }
+
   // 使用丹药
-  const usePill = pill => {
-    const result = playerStore.usePill(pill)
-    if (result.success) {
-      message.success(result.message)
-    } else {
-      message.error(result.message)
+  const usePill = async pill => {
+    try {
+      const result = await gameUseItem(String(pill.id))
+      applyServerInventoryResult(result)
+      message.success(result?.message || '使用丹药成功')
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'inventory item not found') {
+        message.error('丹药不存在，可能已被处理')
+      } else if (code === 'invalid inventory item type') {
+        message.error('目标不是丹药，无法服用')
+      } else {
+        message.error(error?.message || '使用丹药失败')
+      }
     }
   }
 
@@ -610,43 +656,50 @@
   }
 
   // 执行放生
-  const releasePet = () => {
-    if (petToRelease.value) {
-      // 如果灵宠正在出战，先取消出战
-      if (playerStore.activePet?.id === petToRelease.value.id) {
-        playerStore.activePet = null
+  const releasePet = async () => {
+    if (!petToRelease.value) return
+
+    try {
+      const result = await inventoryReleasePet(String(petToRelease.value.id))
+      applyServerInventoryResult(result)
+      message.success(result?.message || '已放生灵宠')
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'inventory item not found') {
+        message.error('灵宠不存在，可能已被处理')
+      } else if (code === 'invalid inventory item type') {
+        message.error('目标不是灵宠，无法放生')
+      } else {
+        message.error(error?.message || '放生失败')
       }
-      // 从背包中移除灵宠
-      const index = playerStore.items.findIndex(item => item.id === petToRelease.value.id)
-      if (index > -1) {
-        playerStore.items.splice(index, 1)
-        playerStore.saveData()
-        message.success('已放生灵宠')
-      }
-      // 关闭所有相关弹窗
-      showReleaseConfirm.value = false
-      showPetModal.value = false
-      petToRelease.value = null
     }
+    // 关闭所有相关弹窗
+    showReleaseConfirm.value = false
+    showPetModal.value = false
+    petToRelease.value = null
   }
 
   // 选中的放生品阶
   const selectedRarityToRelease = ref('all')
 
   // 批量放生函数
-  const batchReleasePets = () => {
-    playerStore.items = playerStore.items.filter(
-      item =>
-        item.type !== 'pet' ||
-        item.id === playerStore.activePet?.id ||
-        (selectedRarityToRelease.value !== 'all' && item.rarity !== selectedRarityToRelease.value)
-    )
+  const batchReleasePets = async () => {
+    try {
+      const result = await inventoryBatchReleasePets(selectedRarityToRelease.value)
+      applyServerInventoryResult(result)
+      message.success(
+        result?.message ||
+          `已放生${selectedRarityToRelease.value === 'all' ? '所有' : petRarities[selectedRarityToRelease.value].name}品阶灵宠`
+      )
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'invalid rarity') {
+        message.error('放生品阶参数无效')
+      } else {
+        message.error(error?.message || '批量放生失败')
+      }
+    }
     showBatchReleaseConfirm.value = false
-    message.success(
-      `已放生${
-        selectedRarityToRelease.value === 'all' ? '所有' : petRarities[selectedRarityToRelease.value].name
-      }品阶的未出战灵宠`
-    )
   }
 
   // 显示灵宠详情
@@ -716,34 +769,49 @@
   }
 
   // 升级灵宠
-  const upgradePet = pet => {
-    const result = playerStore.upgradePet(pet, getUpgradeCost(pet))
-    if (result.success) {
-      message.success(result.message)
-    } else {
-      message.error(result.message)
+  const upgradePet = async pet => {
+    try {
+      const result = await inventoryUpgradePet(String(pet.id))
+      applyServerInventoryResult(result)
+      message.success(result?.message || '升级成功')
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'insufficient pet essence') {
+        message.error('灵宠精华不足')
+      } else if (code === 'inventory item not found') {
+        message.error('灵宠不存在，可能已被处理')
+      } else if (code === 'invalid inventory item type') {
+        message.error('目标不是灵宠，无法升级')
+      } else {
+        message.error(error?.message || '升级失败')
+      }
     }
   }
 
   // 升星灵宠
-  const evolvePet = pet => {
+  const evolvePet = async pet => {
     if (!selectedFoodPet.value) {
       message.error('请选择用于升星的灵宠')
       return
     }
-    // 通过id查找对应的灵宠对象
-    const foodPet = playerStore.items.find(item => item.id === selectedFoodPet.value)
-    if (!foodPet) {
-      message.error('升星材料灵宠不存在')
-      return
-    }
-    const result = playerStore.evolvePet(pet, foodPet)
-    if (result.success) {
-      message.success(result.message)
+
+    try {
+      const result = await inventoryEvolvePet(String(pet.id), String(selectedFoodPet.value))
+      applyServerInventoryResult(result)
+      message.success(result?.message || '升星成功')
       selectedFoodPet.value = null
       showPetModal.value = false
-    } else {
-      message.error(result.message)
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'invalid evolve food pet') {
+        message.error(error?.payload?.message || '升星材料不符合要求')
+      } else if (code === 'inventory item not found') {
+        message.error('灵宠不存在，可能已被处理')
+      } else if (code === 'invalid inventory item type') {
+        message.error('升星目标或材料不是灵宠')
+      } else {
+        message.error(error?.message || '升星失败')
+      }
     }
   }
 
@@ -775,13 +843,21 @@
   }
 
   // 卸下装备
-  const unequipItem = slot => {
-    const result = playerStore.unequipArtifact(slot)
-    if (result) {
+  const unequipItem = async slot => {
+    try {
+      const result = await inventoryUnequipEquipment(slot)
+      applyServerInventoryResult(result)
       showEquipmentDetailModal.value = false
-      message.success('当前装备已卸下')
-    } else {
-      message.error('卸下装备失败')
+      message.success(result?.message || '当前装备已卸下')
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'equipment slot empty') {
+        message.error('该槽位当前没有装备')
+      } else if (code === 'invalid equipment slot') {
+        message.error('装备槽位参数无效')
+      } else {
+        message.error(error?.message || '卸下装备失败')
+      }
     }
   }
 
@@ -837,25 +913,34 @@
 
   // 批量卖出装备
   const batchSellEquipments = async () => {
-    const result = await playerStore.batchSellEquipments(
-      selectedQuality.value === 'all' ? null : selectedQuality.value,
-      selectedEquipmentType.value
-    )
-    if (result.success) {
-      message.success(result.message)
-    } else {
-      message.error(result.message || '批量卖出失败')
+    try {
+      const result = await inventoryBatchSellEquipment({
+        quality: selectedQuality.value === 'all' ? '' : selectedQuality.value,
+        equipmentType: selectedEquipmentType.value || ''
+      })
+      applyServerInventoryResult(result)
+      message.success(result?.message || '批量卖出成功')
+    } catch (error) {
+      message.error(error?.message || '批量卖出失败')
     }
   }
 
   // 卖出单件装备
   const sellEquipment = async equipment => {
-    const result = await playerStore.sellEquipment(equipment)
-    if (result.success) {
-      message.success(result.message)
+    try {
+      const result = await inventorySellEquipment(String(equipment.id))
+      applyServerInventoryResult(result)
+      message.success(result?.message || '卖出成功')
       showEquipmentDetailModal.value = false
-    } else {
-      message.error(result.message || '卖出失败')
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'inventory item not found') {
+        message.error('装备不存在，可能已被处理')
+      } else if (code === 'invalid inventory item type') {
+        message.error('目标不是装备，无法卖出')
+      } else {
+        message.error(error?.message || '卖出失败')
+      }
     }
   }
 
@@ -875,16 +960,29 @@
   // 强化装备
   const handleEnhanceEquipment = () => {
     if (!selectedEquipment.value) return
-    const result = enhanceEquipment(selectedEquipment.value, playerStore.reinforceStones)
-    if (result.success) {
-      playerStore.reinforceStones -= result.cost
-      selectedEquipment.value.stats = { ...result.newStats }
-      selectedEquipment.value.enhanceLevel = result.newLevel
-      message.success('强化成功')
-      playerStore.saveData()
-    } else {
-      message.error(result.message || '强化失败')
-    }
+
+    inventoryEnhanceEquipment(String(selectedEquipment.value.id))
+      .then(result => {
+        applyServerInventoryResult(result)
+        showEnhanceConfirm.value = false
+        if (result?.success) {
+          message.success(result.message || '强化成功')
+        } else {
+          message.error(result?.message || '强化失败')
+        }
+      })
+      .catch(error => {
+        const code = error?.payload?.error
+        if (code === 'insufficient reinforce stones') {
+          message.error('强化石不足')
+        } else if (code === 'equipment max level reached') {
+          message.error('装备已达到最大强化等级')
+        } else if (code === 'equipment item not found') {
+          message.error('装备不存在，可能已被处理')
+        } else {
+          message.error(error?.message || '强化失败')
+        }
+      })
   }
 
   // 洗练确认弹窗
@@ -894,14 +992,27 @@
   // 洗练装备
   const handleReforgeEquipment = () => {
     if (!selectedEquipment.value) return
-    const result = reforgeEquipment(selectedEquipment.value, playerStore.refinementStones, false)
-    if (result.success) {
-      playerStore.refinementStones -= result.cost
-      reforgeResult.value = result
-      showReforgeConfirm.value = true
-    } else {
-      message.error(result.message || '洗练失败')
-    }
+    inventoryReforgeEquipment(String(selectedEquipment.value.id))
+      .then(result => {
+        applyServerInventoryResult(result)
+        if (result?.success) {
+          message.success(result.message || '洗练成功')
+        } else {
+          message.error(result?.message || '洗练失败')
+        }
+      })
+      .catch(error => {
+        const code = error?.payload?.error
+        if (code === 'insufficient refinement stones') {
+          message.error('洗练石不足')
+        } else if (code === 'equipment item not found') {
+          message.error('装备不存在，可能已被处理')
+        } else if (code === 'invalid equipment type') {
+          message.error('该装备类型不支持洗练')
+        } else {
+          message.error(error?.message || '洗练失败')
+        }
+      })
   }
 
   // 确认洗练结果
@@ -917,18 +1028,27 @@
     }
     showReforgeConfirm.value = false
     reforgeResult.value = null
-    playerStore.saveData()
   }
 
   // 使用装备
-  const equipItem = equipment => {
-    const result = playerStore.equipArtifact(equipment, equipment.type)
-    if (result.success) {
-      message.success(result.message)
+  const equipItem = async equipment => {
+    try {
+      const result = await inventoryEquipEquipment(String(equipment.id))
+      applyServerInventoryResult(result)
       showEquipmentModal.value = false
       showEquipmentDetailModal.value = false
-    } else {
-      message.error(result.message || '装备失败')
+      message.success(result?.message || '装备成功')
+    } catch (error) {
+      const code = error?.payload?.error
+      if (code === 'equipment requirement not met') {
+        message.error('境界不足，无法装备此装备')
+      } else if (code === 'equipment item not found') {
+        message.error('装备不存在，可能已被处理')
+      } else if (code === 'invalid equipment slot' || code === 'invalid equipment type') {
+        message.error('装备数据异常，无法装备')
+      } else {
+        message.error(error?.message || '装备失败')
+      }
     }
   }
 
@@ -1007,13 +1127,21 @@
     return Object.values(groups)
   })
   // 使用物品
-  const useItem = item => {
+  const useItem = async item => {
     if (item.type === 'pet') {
-      const result = playerStore.usePet(item)
-      if (result.success) {
-        message.success(result.message)
-      } else {
-        message.error(result.message || '操作失败')
+      try {
+        const result = await gameUseItem(String(item.id))
+        applyServerInventoryResult(result)
+        message.success(result?.message || '操作成功')
+      } catch (error) {
+        const code = error?.payload?.error
+        if (code === 'inventory item not found') {
+          message.error('灵宠不存在，可能已被处理')
+        } else if (code === 'invalid inventory item type') {
+          message.error('目标不是灵宠，无法出战/召回')
+        } else {
+          message.error(error?.message || '操作失败')
+        }
       }
     }
   }
