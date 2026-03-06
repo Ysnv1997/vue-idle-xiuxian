@@ -22,6 +22,7 @@ type GameHandler struct {
 	equipmentService   *service.EquipmentService
 	dungeonService     *service.DungeonService
 	achievementService *service.AchievementService
+	realtimeBroker     *service.GameRealtimeBroker
 }
 
 func NewGameHandler(
@@ -33,6 +34,7 @@ func NewGameHandler(
 	equipmentService *service.EquipmentService,
 	dungeonService *service.DungeonService,
 	achievementService *service.AchievementService,
+	realtimeBroker *service.GameRealtimeBroker,
 ) *GameHandler {
 	return &GameHandler{
 		gameService:        gameService,
@@ -43,6 +45,7 @@ func NewGameHandler(
 		equipmentService:   equipmentService,
 		dungeonService:     dungeonService,
 		achievementService: achievementService,
+		realtimeBroker:     realtimeBroker,
 	}
 }
 
@@ -86,6 +89,53 @@ func (h *GameHandler) Breakthrough(c *gin.Context) {
 	}
 
 	result, err := h.gameService.Breakthrough(c.Request.Context(), userID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+
+	h.respondWithAchievementSync(c, userID, result)
+}
+
+func (h *GameHandler) MeditationStatus(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.gameService.MeditationStatus(c.Request.Context(), userID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *GameHandler) MeditationStart(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.gameService.MeditationStart(c.Request.Context(), userID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+
+	h.respondWithAchievementSync(c, userID, result)
+}
+
+func (h *GameHandler) MeditationStop(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.gameService.MeditationStop(c.Request.Context(), userID)
 	if err != nil {
 		h.handleGameError(c, err)
 		return
@@ -687,6 +737,10 @@ func (h *GameHandler) respondWithAchievementSync(c *gin.Context, userID uuid.UUI
 		}
 	}
 
+	if h.realtimeBroker != nil {
+		h.realtimeBroker.Publish(userID, service.GameRealtimeTopicSnapshot)
+	}
+
 	c.JSON(http.StatusOK, merged)
 }
 
@@ -715,6 +769,40 @@ func (h *GameHandler) handleGameError(c *gin.Context, err error) {
 			"error":               "breakthrough unavailable",
 			"requiredCultivation": breakthroughUnavailableError.RequiredCultivation,
 			"currentCultivation":  breakthroughUnavailableError.CurrentCultivation,
+		})
+		return
+	}
+
+	var cultivationActionDisabledError *service.CultivationActionDisabledError
+	if errors.As(err, &cultivationActionDisabledError) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "cultivation action disabled",
+		})
+		return
+	}
+
+	var meditationSpiritFullError *service.MeditationSpiritFullError
+	if errors.As(err, &meditationSpiritFullError) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "spirit already full",
+		})
+		return
+	}
+
+	var activityConflictError *service.ActivityConflictError
+	if errors.As(err, &activityConflictError) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":    "activity conflict",
+			"conflict": activityConflictError.Conflict,
+		})
+		return
+	}
+
+	var meditationConflictError *service.MeditationConflictError
+	if errors.As(err, &meditationConflictError) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":    "meditation conflict",
+			"conflict": meditationConflictError.Conflict,
 		})
 		return
 	}

@@ -1,12 +1,14 @@
 package service
 
 type huntingMapConfig struct {
-	ID           string
-	Name         string
-	Description  string
-	MinLevel     int
-	RewardFactor float64
-	Monsters     []string
+	ID                  string
+	Name                string
+	Description         string
+	MinLevel            int
+	RewardFactor        float64
+	SpiritCost          int64
+	BaseCultivationGain int64
+	Monsters            []string
 }
 
 var huntingMapCatalog = []huntingMapConfig{

@@ -182,7 +182,10 @@
                     <n-space justify="space-between">
                       <n-text>等级: {{ pet.level || 1 }}</n-text>
                       <n-text>星级: {{ pet.star || 0 }}</n-text>
-                      <n-button size="small" @click="showPetDetails(pet)">详情</n-button>
+                      <n-space>
+                        <n-button size="small" type="info" @click="quickListAuction(pet)">上架拍卖</n-button>
+                        <n-button size="small" @click="showPetDetails(pet)">详情</n-button>
+                      </n-space>
                     </n-space>
                   </n-space>
                 </n-card>
@@ -318,6 +321,10 @@
           </n-button>
         </n-space>
         <n-space justify="space-between">
+          <span>上架坊市（固定价）</span>
+          <n-button size="small" type="info" @click="quickListAuction(selectedPet)">上架拍卖</n-button>
+        </n-space>
+        <n-space justify="space-between">
           <span>放生灵宠（不会返还已消耗的道具）</span>
           <n-button size="small" type="error" @click="confirmReleasePet(selectedPet)">放生灵宠</n-button>
           <n-modal v-model:show="showReleaseConfirm" preset="dialog" title="灵宠放生" style="width: 600px">
@@ -359,7 +366,10 @@
             <template #header>
               <n-space justify="space-between">
                 <span>{{ equipment.name }}</span>
-                <n-button size="small" type="warning" @click.stop="sellEquipment(equipment)">卖出</n-button>
+                <n-space>
+                  <n-button size="small" type="info" @click.stop="quickListAuction(equipment)">上架拍卖</n-button>
+                  <n-button size="small" type="warning" @click.stop="sellEquipment(equipment)">卖出</n-button>
+                </n-space>
               </n-space>
             </template>
             <n-space vertical>
@@ -450,6 +460,13 @@
             卸下
           </n-button>
           <n-button
+            type="info"
+            @click="quickListAuction(selectedEquipment)"
+            v-if="selectedEquipment?.id != playerStore.equippedArtifacts[selectedEquipment?.slot]?.id"
+          >
+            上架拍卖
+          </n-button>
+          <n-button
             type="error"
             @click="sellEquipment(selectedEquipment)"
             v-if="selectedEquipment?.id != playerStore.equippedArtifacts[selectedEquipment?.slot]?.id"
@@ -502,6 +519,43 @@
       <n-button @click="confirmReforgeResult(false)">保留原属性</n-button>
     </template>
   </n-modal>
+  <n-modal v-model:show="showAuctionListConfirm" preset="dialog" title="上架坊市确认" style="width: 520px">
+    <template v-if="auctionListingItem">
+      <n-space vertical :size="12">
+        <n-descriptions bordered :column="1">
+          <n-descriptions-item label="物品名称">
+            {{ auctionListingItem.name || '未知物品' }}
+          </n-descriptions-item>
+          <n-descriptions-item label="物品类型">
+            {{ getAuctionListingTypeName(auctionListingItem) }}
+          </n-descriptions-item>
+          <n-descriptions-item label="推荐价格">
+            {{ defaultAuctionPrice(auctionListingItem) }} 灵石
+          </n-descriptions-item>
+        </n-descriptions>
+        <n-input-number
+          v-model:value="auctionListingPrice"
+          :min="1"
+          :step="10"
+          placeholder="请输入上架价格(灵石)"
+          style="width: 100%"
+        />
+      </n-space>
+    </template>
+    <template #action>
+      <n-space justify="end">
+        <n-button @click="cancelAuctionListing">取消</n-button>
+        <n-button
+          type="primary"
+          :loading="auctionListingSubmitting"
+          :disabled="!auctionListingItem || !auctionListingPrice || auctionListingPrice <= 0"
+          @click="confirmAuctionListing"
+        >
+          确认上架
+        </n-button>
+      </n-space>
+    </template>
+  </n-modal>
 </template>
 
 <script setup>
@@ -511,6 +565,7 @@
   import { getStatName, formatStatValue } from '../plugins/stats'
   import { getRealmName } from '../plugins/realm'
   import { pillRecipes, pillGrades, pillTypes, calculatePillEffect } from '../plugins/pills'
+  import { createAuctionOrder } from '../api/modules/auction'
   import {
     inventorySellEquipment,
     inventoryBatchSellEquipment,
@@ -680,6 +735,10 @@
 
   // 选中的放生品阶
   const selectedRarityToRelease = ref('all')
+  const showAuctionListConfirm = ref(false)
+  const auctionListingItem = ref(null)
+  const auctionListingPrice = ref(100)
+  const auctionListingSubmitting = ref(false)
 
   // 批量放生函数
   const batchReleasePets = async () => {
@@ -921,6 +980,93 @@
       message.success(result?.message || '批量卖出成功')
     } catch (error) {
       message.error(error?.message || '批量卖出失败')
+    }
+  }
+
+  const defaultAuctionPrice = item => {
+    if (!item) return 100
+    if (item.type === 'pet') {
+      const petBase = {
+        mortal: 200,
+        spiritual: 450,
+        mystic: 1000,
+        celestial: 2200,
+        divine: 5000
+      }
+      return petBase[item.rarity] || 300
+    }
+    const equipmentBase = {
+      common: 80,
+      uncommon: 150,
+      rare: 300,
+      epic: 700,
+      legendary: 1500,
+      mythic: 3200
+    }
+    return equipmentBase[item.quality] || 120
+  }
+
+  const getAuctionListingTypeName = item => {
+    if (!item?.type) return '未知'
+    if (item.type === 'pet') {
+      return `灵宠/${petRarities[item.rarity]?.name || item.rarity || '未知品阶'}`
+    }
+    if (item.type === 'pill') {
+      return '丹药'
+    }
+    return `装备/${equipmentTypes[item.type] || item.type}`
+  }
+
+  const quickListAuction = item => {
+    if (!item?.id) {
+      message.error('物品数据异常，无法上架')
+      return
+    }
+
+    if (item.type === 'pet' && playerStore.activePet?.id && String(playerStore.activePet.id) === String(item.id)) {
+      message.error('出战中的灵宠无法上架，请先召回')
+      return
+    }
+
+    auctionListingItem.value = item
+    auctionListingPrice.value = defaultAuctionPrice(item)
+    showAuctionListConfirm.value = true
+  }
+
+  const cancelAuctionListing = () => {
+    showAuctionListConfirm.value = false
+    auctionListingItem.value = null
+    auctionListingPrice.value = 100
+    auctionListingSubmitting.value = false
+  }
+
+  const confirmAuctionListing = async () => {
+    if (!auctionListingItem.value?.id) {
+      message.error('物品数据异常，无法上架')
+      return
+    }
+    const parsed = Math.floor(Number(auctionListingPrice.value))
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      message.warning('请输入有效价格')
+      return
+    }
+
+    try {
+      auctionListingSubmitting.value = true
+      const result = await createAuctionOrder({
+        itemId: String(auctionListingItem.value.id),
+        price: parsed,
+        durationHours: 24
+      })
+      applyServerInventoryResult(result)
+      message.success(result?.message || '上架成功')
+      cancelAuctionListing()
+      showEquipmentDetailModal.value = false
+      showPetModal.value = false
+    } catch (error) {
+      message.error(error?.message || '上架失败')
+    } finally {
+      auctionListingSubmitting.value = false
     }
   }
 

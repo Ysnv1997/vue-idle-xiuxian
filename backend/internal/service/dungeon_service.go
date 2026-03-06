@@ -109,7 +109,19 @@ func (s *DungeonService) Start(ctx context.Context, userID uuid.UUID, difficulty
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := ensureDungeonRows(ctx, tx, userID); err != nil {
+	if err := lockDungeonRunTx(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := ensureHuntingRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopHuntingForConflictTx(ctx, tx, userID, "进入秘境，刷怪已自动结束"); err != nil {
+		return nil, err
+	}
+	if err := ensureMeditationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopMeditationForConflictTx(ctx, tx, userID, "进入秘境，打坐已自动结束"); err != nil {
 		return nil, err
 	}
 

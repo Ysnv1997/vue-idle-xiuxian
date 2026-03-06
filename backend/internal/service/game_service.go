@@ -16,14 +16,31 @@ import (
 )
 
 type GameService struct {
-	pool     *pgxpool.Pool
-	userRepo *repository.UserRepository
+	pool           *pgxpool.Pool
+	userRepo       *repository.UserRepository
+	runtimeConfig  *RuntimeConfigService
+	realtimeBroker *GameRealtimeBroker
 }
 
-func NewGameService(pool *pgxpool.Pool, userRepo *repository.UserRepository) *GameService {
+func NewGameService(pool *pgxpool.Pool, userRepo *repository.UserRepository, runtimeConfig *RuntimeConfigService, realtimeBroker *GameRealtimeBroker) *GameService {
 	return &GameService{
-		pool:     pool,
-		userRepo: userRepo,
+		pool:           pool,
+		userRepo:       userRepo,
+		runtimeConfig:  runtimeConfig,
+		realtimeBroker: realtimeBroker,
+	}
+}
+
+func (s *GameService) notifyRealtime(userID uuid.UUID, topics ...string) {
+	if s == nil || s.realtimeBroker == nil {
+		return
+	}
+	if len(topics) == 0 {
+		s.realtimeBroker.Publish(userID, GameRealtimeTopicAll)
+		return
+	}
+	for _, topic := range topics {
+		s.realtimeBroker.Publish(userID, topic)
 	}
 }
 
@@ -87,6 +104,12 @@ func (e *BreakthroughUnavailableError) Error() string {
 	return fmt.Sprintf("breakthrough unavailable: current %d, required %d", e.CurrentCultivation, e.RequiredCultivation)
 }
 
+type CultivationActionDisabledError struct{}
+
+func (e *CultivationActionDisabledError) Error() string {
+	return "cultivation action disabled"
+}
+
 type InvalidHuntingMapError struct {
 	MapID string
 }
@@ -111,139 +134,11 @@ func (e *HuntingMapLockedError) Error() string {
 }
 
 func (s *GameService) CultivateOnce(ctx context.Context, userID uuid.UUID) (*CultivationActionResult, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin cultivate once transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	state, err := loadCultivationState(ctx, tx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	spiritCost := currentCultivationCost(state.Level)
-	if state.Spirit < float64(spiritCost) {
-		return nil, &InsufficientSpiritError{
-			Required:          float64(spiritCost),
-			Current:           state.Spirit,
-			RegenRate:         state.SpiritRate,
-			RetryAfterSeconds: estimateSpiritRetryAfterSeconds(float64(spiritCost), state.Spirit, state.SpiritRate),
-		}
-	}
-
-	gain := currentCultivationGain(state.Level)
-	doubleGain := shouldDoubleGain(state.Luck)
-	if doubleGain {
-		gain *= 2
-	}
-	gain = applyCultivationRate(gain, state.CultivationRate)
-
-	state.Spirit -= float64(spiritCost)
-	state.Cultivation += gain
-
-	breakthrough := false
-	if state.Cultivation >= state.MaxCultivation {
-		breakthrough = applyBreakthrough(state)
-	}
-
-	if err := persistCultivationState(ctx, tx, userID, state, 1, breakthrough); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit cultivate once transaction: %w", err)
-	}
-
-	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &CultivationActionResult{
-		SpiritCost:      spiritCost,
-		CultivationGain: gain,
-		DoubleGain:      doubleGain,
-		DoubleGainTimes: boolToInt(doubleGain),
-		Breakthrough:    breakthrough,
-		Snapshot:        snapshot,
-	}, nil
+	return nil, &CultivationActionDisabledError{}
 }
 
 func (s *GameService) CultivateUntilBreakthrough(ctx context.Context, userID uuid.UUID) (*CultivationActionResult, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin cultivate until breakthrough transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	state, err := loadCultivationState(ctx, tx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	baseGain := currentCultivationGain(state.Level)
-	if baseGain <= 0 {
-		baseGain = 1
-	}
-
-	remainingCultivation := maxInt64(0, state.MaxCultivation-state.Cultivation)
-	times := int64(0)
-	if remainingCultivation > 0 {
-		times = int64(math.Ceil(float64(remainingCultivation) / float64(baseGain)))
-	}
-
-	spiritCostPerTime := currentCultivationCost(state.Level)
-	totalSpiritCost := spiritCostPerTime * times
-	if state.Spirit < float64(totalSpiritCost) {
-		return nil, &InsufficientSpiritError{
-			Required:          float64(totalSpiritCost),
-			Current:           state.Spirit,
-			RegenRate:         state.SpiritRate,
-			RetryAfterSeconds: estimateSpiritRetryAfterSeconds(float64(totalSpiritCost), state.Spirit, state.SpiritRate),
-		}
-	}
-
-	totalGain := int64(0)
-	doubleGainTimes := 0
-	for i := int64(0); i < times; i++ {
-		gain := baseGain
-		if shouldDoubleGain(state.Luck) {
-			doubleGainTimes++
-			gain *= 2
-		}
-		totalGain += applyCultivationRate(gain, state.CultivationRate)
-	}
-
-	state.Spirit -= float64(totalSpiritCost)
-	state.Cultivation += totalGain
-
-	breakthrough := false
-	if state.Cultivation >= state.MaxCultivation {
-		breakthrough = applyBreakthrough(state)
-	}
-
-	if err := persistCultivationState(ctx, tx, userID, state, times, breakthrough); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit cultivate until breakthrough transaction: %w", err)
-	}
-
-	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &CultivationActionResult{
-		SpiritCost:      totalSpiritCost,
-		CultivationGain: totalGain,
-		DoubleGain:      doubleGainTimes > 0,
-		DoubleGainTimes: doubleGainTimes,
-		Breakthrough:    breakthrough,
-		Snapshot:        snapshot,
-	}, nil
+	return nil, &CultivationActionDisabledError{}
 }
 
 func (s *GameService) Breakthrough(ctx context.Context, userID uuid.UUID) (*CultivationActionResult, error) {
@@ -302,17 +197,17 @@ func (s *GameService) ListHuntingMaps(ctx context.Context, userID uuid.UUID) (*H
 		return nil, fmt.Errorf("player snapshot not found")
 	}
 
-	baseCost := currentCultivationCost(snapshot.Level)
-	baseGain := currentCultivationGain(snapshot.Level)
+	huntingGainMultiplier := s.getHuntingWinGainMultiplier(ctx)
 	maps := make([]HuntingMap, 0, len(huntingMapCatalog))
 	for _, cfg := range huntingMapCatalog {
-		estimatedCost := applyHuntingFactor(baseCost, cfg.RewardFactor)
-		estimatedGain := int64(math.Ceil(float64(alignCultivationGainByCost(baseCost, baseGain, estimatedCost)) * huntingWinGainMultiplier))
+		estimatedCost := fixedHuntingMapSpiritCost(cfg)
+		estimatedGain := int64(math.Ceil(float64(fixedHuntingMapBaseGain(cfg)) * huntingGainMultiplier))
 		if estimatedGain <= 0 {
 			estimatedGain = 1
 		}
-		estimatedPerHour := estimateCultivationPerHour(estimatedCost, estimatedGain, snapshot.SpiritRate)
-		recommendedPower, recommendedHealth := estimateHuntingMapEntryRequirements(snapshot.Level, cfg)
+		meditationRate := resolveMeditationSpiritRegen(snapshot.Level, snapshot.SpiritRate, meditationEffectBonus{})
+		estimatedPerHour := estimateCultivationPerHour(estimatedCost, estimatedGain, meditationRate)
+		recommendedPower, recommendedHealth := estimateHuntingMapEntryRequirements(cfg.MinLevel, cfg)
 		maps = append(maps, HuntingMap{
 			ID:                cfg.ID,
 			Name:              cfg.Name,
@@ -324,7 +219,7 @@ func (s *GameService) ListHuntingMaps(ctx context.Context, userID uuid.UUID) (*H
 			EstimatedCost:     estimatedCost,
 			EstimatedGain:     estimatedGain,
 			Monsters:          cloneStringSlice(cfg.Monsters),
-			ProgressionNote:   "日常刷图升级效率约为打坐的2倍，建议按等级选择地图长期挂机。",
+			ProgressionNote:   "每张地图的单次灵力消耗与基础修为收益固定，建议按等级段选择地图挂机。",
 			EstimatedPerHour:  estimatedPerHour,
 		})
 	}
@@ -348,6 +243,26 @@ func (s *GameService) HuntOnce(ctx context.Context, userID uuid.UUID, mapID stri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := ensureNoActiveDungeonRunTx(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := ensureHuntingRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	huntingActive, err := loadHuntingRunActiveForUpdate(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if huntingActive {
+		return nil, &ActivityConflictError{Conflict: "hunting"}
+	}
+	if err := ensureMeditationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopMeditationForConflictTx(ctx, tx, userID, "进行刷怪，打坐已自动结束"); err != nil {
+		return nil, err
+	}
+
 	state, err := loadCultivationState(ctx, tx, userID)
 	if err != nil {
 		return nil, err
@@ -360,20 +275,20 @@ func (s *GameService) HuntOnce(ctx context.Context, userID uuid.UUID, mapID stri
 		}
 	}
 
-	baseCost := currentCultivationCost(state.Level)
-	baseGain := currentCultivationGain(state.Level)
+	huntingGainMultiplier := s.getHuntingWinGainMultiplier(ctx)
 
-	spiritCost := applyHuntingFactor(baseCost, targetMap.RewardFactor)
+	spiritCost := fixedHuntingMapSpiritCost(targetMap)
+	meditationRate := resolveMeditationSpiritRegen(state.Level, state.SpiritRate, meditationEffectBonus{})
 	if state.Spirit < float64(spiritCost) {
 		return nil, &InsufficientSpiritError{
 			Required:          float64(spiritCost),
 			Current:           state.Spirit,
-			RegenRate:         state.SpiritRate,
-			RetryAfterSeconds: estimateSpiritRetryAfterSeconds(float64(spiritCost), state.Spirit, state.SpiritRate),
+			RegenRate:         meditationRate,
+			RetryAfterSeconds: estimateSpiritRetryAfterSeconds(float64(spiritCost), state.Spirit, meditationRate),
 		}
 	}
 
-	gain := int64(math.Ceil(float64(alignCultivationGainByCost(baseCost, baseGain, spiritCost)) * huntingWinGainMultiplier))
+	gain := int64(math.Ceil(float64(fixedHuntingMapBaseGain(targetMap)) * huntingGainMultiplier))
 	if gain <= 0 {
 		gain = 1
 	}
@@ -434,7 +349,7 @@ func loadCultivationState(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*cu
 			pp.realm,
 			pp.cultivation,
 			pp.max_cultivation,
-				pr.spirit + (LEAST(GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0), 43200) * pr.spirit_rate),
+				pr.spirit,
 			pr.spirit_rate,
 			pr.luck,
 			pr.cultivation_rate
@@ -583,7 +498,6 @@ func applyBreakthrough(state *cultivationState) bool {
 	state.MaxCultivation = realm.MaxCultivation
 	state.Cultivation = 0
 	state.Spirit += float64(100 * state.Level)
-	state.SpiritRate *= 1.2
 	return true
 }
 
@@ -621,6 +535,30 @@ func alignCultivationGainByCost(baseCost int64, baseGain int64, targetCost int64
 		return 1
 	}
 	return gain
+}
+
+func fixedHuntingMapSpiritCost(cfg huntingMapConfig) int64 {
+	if cfg.SpiritCost > 0 {
+		return cfg.SpiritCost
+	}
+	baseCost := int64(math.Round(baseMeditationSpiritRegen(cfg.MinLevel)))
+	if baseCost < 1 {
+		baseCost = 1
+	}
+	return applyHuntingFactor(baseCost, cfg.RewardFactor)
+}
+
+func fixedHuntingMapBaseGain(cfg huntingMapConfig) int64 {
+	if cfg.BaseCultivationGain > 0 {
+		return cfg.BaseCultivationGain
+	}
+	baseCost := int64(math.Round(baseMeditationSpiritRegen(cfg.MinLevel)))
+	if baseCost < 1 {
+		baseCost = 1
+	}
+	baseGain := currentCultivationGain(cfg.MinLevel)
+	spiritCost := fixedHuntingMapSpiritCost(cfg)
+	return alignCultivationGainByCost(baseCost, baseGain, spiritCost)
 }
 
 func randomHuntingMonster(monsters []string) string {
@@ -676,4 +614,70 @@ func estimateSpiritRetryAfterSeconds(required float64, current float64, spiritRa
 		return 24 * 60 * 60
 	}
 	return seconds
+}
+
+func (s *GameService) getHuntingWinGainMultiplier(ctx context.Context) float64 {
+	if s.runtimeConfig == nil {
+		return 2.0
+	}
+	return s.runtimeConfig.GetFloat64(ctx, RuntimeConfigKeyHuntingWinGainMultiplier, 2.0, 0.5, 10.0)
+}
+
+func (s *GameService) getHuntingReviveMultiplier(ctx context.Context) float64 {
+	if s.runtimeConfig == nil {
+		return defaultHuntingReviveMultiplier
+	}
+	return s.runtimeConfig.GetFloat64(ctx, RuntimeConfigKeyHuntingReviveMultiplier, defaultHuntingReviveMultiplier, 0.2, 5.0)
+}
+
+func (s *GameService) getHuntingAutoHealRates(ctx context.Context) (float64, float64) {
+	if s.runtimeConfig == nil {
+		return defaultHuntingAutoHealBaseRate, defaultHuntingAutoHealCapRate
+	}
+	base := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingAutoHealBaseRate,
+		defaultHuntingAutoHealBaseRate,
+		0,
+		1,
+	)
+	capRate := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingAutoHealCapRate,
+		defaultHuntingAutoHealCapRate,
+		0,
+		1,
+	)
+	if capRate < base {
+		capRate = base
+	}
+	return base, capRate
+}
+
+func (s *GameService) getHuntingSpiritRefundConfig(ctx context.Context) (float64, float64, float64) {
+	if s.runtimeConfig == nil {
+		return defaultHuntingSpiritRefundChance, defaultHuntingSpiritRefundMinRatio, defaultHuntingSpiritRefundMaxRatio
+	}
+	chance := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingSpiritRefundChance,
+		defaultHuntingSpiritRefundChance,
+		0,
+		1,
+	)
+	minRatio := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingSpiritRefundMinRatio,
+		defaultHuntingSpiritRefundMinRatio,
+		0,
+		1,
+	)
+	maxRatio := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingSpiritRefundMaxRatio,
+		defaultHuntingSpiritRefundMaxRatio,
+		0,
+		1,
+	)
+	return resolveHuntingSpiritRefundConfig(chance, minRatio, maxRatio)
 }

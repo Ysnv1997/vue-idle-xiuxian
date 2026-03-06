@@ -36,7 +36,15 @@ func (h *PlayerHandler) Snapshot(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, buildPlayerSnapshotPayload(snapshot))
+}
+
+func buildPlayerSnapshotPayload(snapshot *repository.PlayerSnapshot) gin.H {
+	if snapshot == nil {
+		return gin.H{}
+	}
+
+	return gin.H{
 		"name":                    snapshot.Name,
 		"level":                   snapshot.Level,
 		"realm":                   snapshot.Realm,
@@ -75,7 +83,7 @@ func (h *PlayerHandler) Snapshot(c *gin.Context) {
 		"activePetId":             snapshot.ActivePetID,
 		"activeEffects":           decodeJSONArray(snapshot.ActiveEffects),
 		"equippedArtifacts":       decodeJSON(snapshot.EquippedArtifacts),
-	})
+	}
 }
 
 func (h *PlayerHandler) ActiveCount(c *gin.Context) {

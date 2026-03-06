@@ -24,7 +24,7 @@
               <thead>
                 <tr>
                   <th>套餐代码</th>
-                  <th>信用点</th>
+                  <th>积分(LDC)</th>
                   <th>灵石到账</th>
                   <th>加成率</th>
                   <th style="width: 140px">操作</th>

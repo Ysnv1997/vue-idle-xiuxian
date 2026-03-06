@@ -21,7 +21,7 @@ import (
 type ChatHandler struct {
 	chatService  *service.ChatService
 	tokenService *service.TokenService
-	adminUsers   map[string]struct{}
+	adminService *service.AdminService
 
 	upgrader websocket.Upgrader
 	clients  map[*websocket.Conn]uuid.UUID
@@ -29,20 +29,11 @@ type ChatHandler struct {
 	writeM   sync.Mutex
 }
 
-func NewChatHandler(chatService *service.ChatService, tokenService *service.TokenService, adminLinuxDoUserIDs []string) *ChatHandler {
-	adminUsers := make(map[string]struct{}, len(adminLinuxDoUserIDs))
-	for _, userID := range adminLinuxDoUserIDs {
-		userID = strings.TrimSpace(userID)
-		if userID == "" {
-			continue
-		}
-		adminUsers[userID] = struct{}{}
-	}
-
+func NewChatHandler(chatService *service.ChatService, tokenService *service.TokenService, adminService *service.AdminService) *ChatHandler {
 	return &ChatHandler{
 		chatService:  chatService,
 		tokenService: tokenService,
-		adminUsers:   adminUsers,
+		adminService: adminService,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -425,11 +416,21 @@ func (h *ChatHandler) requireChatAdmin(c *gin.Context) (uuid.UUID, string, bool)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return uuid.Nil, "", false
 	}
-	if len(h.adminUsers) == 0 {
-		c.JSON(http.StatusForbidden, gin.H{"error": "chat admin disabled"})
+	if h.adminService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "chat admin unavailable"})
 		return uuid.Nil, "", false
 	}
-	if _, allowed := h.adminUsers[linuxDoUserID]; !allowed {
+
+	allowed, err := h.adminService.HasPermissionByLinuxDoUserID(
+		c.Request.Context(),
+		linuxDoUserID,
+		service.AdminPermissionModerateChat,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query admin status failed"})
+		return uuid.Nil, "", false
+	}
+	if !allowed {
 		c.JSON(http.StatusForbidden, gin.H{"error": "chat admin required"})
 		return uuid.Nil, "", false
 	}

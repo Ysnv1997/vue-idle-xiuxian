@@ -65,6 +65,22 @@ func (s *ExplorationService) Start(ctx context.Context, userID uuid.UUID, locati
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := ensureNoActiveDungeonRunTx(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := ensureHuntingRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopHuntingForConflictTx(ctx, tx, userID, "进行探索，刷怪已自动结束"); err != nil {
+		return nil, err
+	}
+	if err := ensureMeditationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopMeditationForConflictTx(ctx, tx, userID, "进行探索，打坐已自动结束"); err != nil {
+		return nil, err
+	}
+
 	if err := ensureExplorationRows(ctx, tx, userID); err != nil {
 		return nil, err
 	}
@@ -192,7 +208,7 @@ func loadExplorationState(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*ex
 			pp.realm,
 			pp.cultivation,
 			pp.max_cultivation,
-				pr.spirit + (LEAST(GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0), 43200) * pr.spirit_rate),
+			pr.spirit,
 			pr.spirit_rate,
 			pr.herb_rate,
 			pr.luck,
@@ -388,7 +404,7 @@ func applyExplorationEventEffect(state *explorationState, event *explorationEven
 		bonus := int64(math.Floor(50 * (float64(state.Level)/4 + 1)))
 		state.Cultivation += bonus
 		state.SpiritRate *= 1.05
-		result.Messages = append(result.Messages, fmt.Sprintf("[顿悟]突然顿悟，获得%d点修为，灵力获取速率提升5%%", bonus))
+		result.Messages = append(result.Messages, fmt.Sprintf("[顿悟]突然顿悟，获得%d点修为，打坐恢复效率提升5%%", bonus))
 	case "qi_deviation":
 		damage := int64(math.Floor(60 * (float64(state.Level)/3 + 1)))
 		state.Spirit = maxFloat64(0, state.Spirit-float64(damage))
@@ -458,7 +474,6 @@ func applyBreakthroughForExploration(state *explorationState) bool {
 	state.MaxCultivation = realm.MaxCultivation
 	state.Cultivation = 0
 	state.Spirit += float64(100 * state.Level)
-	state.SpiritRate *= 1.2
 	return true
 }
 

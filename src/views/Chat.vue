@@ -3,7 +3,7 @@
     <header class="page-head">
       <p class="page-eyebrow">传音台</p>
       <h2>聊天</h2>
-      <p class="page-desc">查看频道消息、发送聊天内容与管理违禁词。</p>
+      <p class="page-desc">查看频道消息并与其他修士交流。</p>
     </header>
 
     <n-card :bordered="false" class="page-card">
@@ -28,13 +28,7 @@
 
         <n-card v-if="chatStore.adminEnabled" size="small" title="聊天管理">
           <template #header-extra>
-            <n-button
-              size="small"
-              :loading="chatStore.loadingAdminMutes || chatStore.loadingAdminBlockedWords"
-              @click="reloadAdminData"
-            >
-              刷新管理数据
-            </n-button>
+            <n-button size="small" :loading="chatStore.loadingAdminMutes" @click="reloadAdminMutes">刷新禁言数据</n-button>
           </template>
 
           <n-space vertical>
@@ -87,69 +81,6 @@
                 </tr>
               </tbody>
             </n-table>
-
-            <n-grid :cols="24" :x-gap="10" :y-gap="10">
-              <n-grid-item :span="10">
-                <n-input v-model:value="adminBlockedWord" placeholder="新增或更新违禁词" />
-              </n-grid-item>
-              <n-grid-item :span="5">
-                <n-select v-model:value="adminBlockedWordEnabled" :options="blockedWordStatusOptions" />
-              </n-grid-item>
-              <n-grid-item :span="9">
-                <n-space justify="end">
-                  <n-button type="primary" :loading="adminWordSubmitting" @click="submitBlockedWord">
-                    保存违禁词
-                  </n-button>
-                  <n-button tertiary :loading="chatStore.loadingAdminBlockedWords" @click="reloadBlockedWords">
-                    刷新违禁词
-                  </n-button>
-                </n-space>
-              </n-grid-item>
-            </n-grid>
-
-            <n-table striped size="small">
-              <thead>
-                <tr>
-                  <th style="width: 200px">违禁词</th>
-                  <th style="width: 90px">状态</th>
-                  <th style="width: 170px">更新时间</th>
-                  <th style="width: 180px">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in chatStore.adminBlockedWords" :key="item.word">
-                  <td>{{ item.word || '-' }}</td>
-                  <td>{{ item.enabled ? '启用' : '停用' }}</td>
-                  <td>{{ formatTime(item.updatedAt) }}</td>
-                  <td>
-                    <n-space>
-                      <n-button
-                        size="tiny"
-                        tertiary
-                        :loading="adminWordSubmitting"
-                        @click="toggleBlockedWord(item)"
-                      >
-                        {{ item.enabled ? '停用' : '启用' }}
-                      </n-button>
-                      <n-button
-                        size="tiny"
-                        tertiary
-                        type="error"
-                        :loading="adminWordSubmitting"
-                        @click="removeBlockedWord(item.word)"
-                      >
-                        删除
-                      </n-button>
-                    </n-space>
-                  </td>
-                </tr>
-                <tr v-if="chatStore.adminBlockedWords.length === 0">
-                  <td colspan="4">
-                    <n-empty description="暂无违禁词配置" />
-                  </td>
-                </tr>
-              </tbody>
-            </n-table>
           </n-space>
         </n-card>
 
@@ -192,17 +123,9 @@
 
   const draft = ref('')
   const adminSubmitting = ref(false)
-  const adminWordSubmitting = ref(false)
   const adminTargetLinuxDoUserId = ref('')
   const adminDurationMinutes = ref(30)
   const adminReason = ref('')
-  const adminBlockedWord = ref('')
-  const adminBlockedWordEnabled = ref(true)
-
-  const blockedWordStatusOptions = [
-    { label: '启用', value: true },
-    { label: '停用', value: false }
-  ]
 
   const connect = async () => {
     chatStore.connect()
@@ -230,22 +153,6 @@
     } catch (error) {
       message.error(error?.message || '加载禁言列表失败')
     }
-  }
-
-  const reloadBlockedWords = async () => {
-    try {
-      await chatStore.loadAdminBlockedWords({
-        includeDisabled: true,
-        limit: 200,
-        silentForbidden: false
-      })
-    } catch (error) {
-      message.error(error?.message || '加载违禁词失败')
-    }
-  }
-
-  const reloadAdminData = async () => {
-    await Promise.all([reloadAdminMutes(), reloadBlockedWords()])
   }
 
   const send = () => {
@@ -323,58 +230,6 @@
     await submitUnmute(adminTargetLinuxDoUserId.value.trim())
   }
 
-  const submitBlockedWord = async () => {
-    const word = adminBlockedWord.value.trim()
-    if (!word) {
-      message.warning('请输入违禁词')
-      return
-    }
-
-    adminWordSubmitting.value = true
-    try {
-      const result = await chatStore.adminUpsertBlockedWord(word, Boolean(adminBlockedWordEnabled.value))
-      message.success(result?.message || '违禁词更新成功')
-      adminBlockedWord.value = ''
-      await reloadBlockedWords()
-    } catch (error) {
-      message.error(error?.message || '违禁词更新失败')
-    } finally {
-      adminWordSubmitting.value = false
-    }
-  }
-
-  const toggleBlockedWord = async item => {
-    const word = String(item?.word || '').trim()
-    if (!word) return
-
-    adminWordSubmitting.value = true
-    try {
-      await chatStore.adminUpsertBlockedWord(word, !Boolean(item?.enabled))
-      message.success('违禁词状态已更新')
-      await reloadBlockedWords()
-    } catch (error) {
-      message.error(error?.message || '违禁词状态更新失败')
-    } finally {
-      adminWordSubmitting.value = false
-    }
-  }
-
-  const removeBlockedWord = async wordRaw => {
-    const word = String(wordRaw || '').trim()
-    if (!word) return
-
-    adminWordSubmitting.value = true
-    try {
-      await chatStore.adminDeleteBlockedWord(word)
-      message.success('违禁词已删除')
-      await reloadBlockedWords()
-    } catch (error) {
-      message.error(error?.message || '违禁词删除失败')
-    } finally {
-      adminWordSubmitting.value = false
-    }
-  }
-
   const formatTime = value => {
     if (!value) return '-'
     const date = new Date(value)
@@ -387,7 +242,6 @@
     await reloadHistory()
     try {
       await chatStore.loadAdminMutes({ silentForbidden: true, limit: 100 })
-      await chatStore.loadAdminBlockedWords({ silentForbidden: true, limit: 200, includeDisabled: true })
     } catch {
       // handled in store
     }
@@ -402,8 +256,7 @@
   .chat-log {
     border: 1px solid rgba(127, 127, 127, 0.2);
     border-radius: 6px;
-    min-height: 360px;
-    max-height: 480px;
+    height: 420px;
     overflow-y: auto;
     padding: 10px;
   }

@@ -11,11 +11,12 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version)
   },
   base: './',
+  host: '0.0.0.0',
   server: {
-    allowedHosts: ['xnnd3k.test.notifyx.cn'],
+    allowedHosts: ['xnnd3k.test.notifyx.cn','xiuxian.notifyx.cn'],
     proxy: {
       '/api': {
-        target: 'http://localhost:8081',
+        target: 'http://127.0.0.1:8081',
         changeOrigin: true,
         ws: true
       }

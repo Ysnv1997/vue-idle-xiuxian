@@ -330,7 +330,7 @@ func loadAchievementState(ctx context.Context, tx pgx.Tx, userID uuid.UUID, forU
 	query := `
 		SELECT
 			pp.level,
-				pr.spirit + (LEAST(GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0), 43200) * pr.spirit_rate),
+			pr.spirit,
 			pr.spirit_rate,
 			pr.luck,
 			pr.herb_rate,

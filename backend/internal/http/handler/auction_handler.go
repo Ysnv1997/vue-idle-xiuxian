@@ -44,8 +44,10 @@ func (h *AuctionHandler) List(c *gin.Context) {
 		}
 		offset = parsed
 	}
+	category := c.Query("category")
+	subCategory := c.Query("subCategory")
 
-	result, err := h.auctionService.List(c.Request.Context(), userID, limit, offset)
+	result, err := h.auctionService.List(c.Request.Context(), userID, limit, offset, category, subCategory)
 	if err != nil {
 		h.handleAuctionError(c, err)
 		return
@@ -151,53 +153,6 @@ func (h *AuctionHandler) Buy(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-type auctionBidRequest struct {
-	OrderID int64 `json:"orderId"`
-	Amount  int64 `json:"amount"`
-}
-
-func (h *AuctionHandler) Bid(c *gin.Context) {
-	userID, ok := middleware.UserIDFromContext(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	var req auctionBidRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.OrderID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "orderId is required"})
-		return
-	}
-
-	result, err := h.auctionService.Bid(c.Request.Context(), userID, req.OrderID, req.Amount)
-	if err != nil {
-		h.handleAuctionError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, result)
-}
-
-func (h *AuctionHandler) AcceptBid(c *gin.Context) {
-	userID, ok := middleware.UserIDFromContext(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	var req auctionOrderActionRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.OrderID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "orderId is required"})
-		return
-	}
-
-	result, err := h.auctionService.AcceptHighestBid(c.Request.Context(), userID, req.OrderID)
-	if err != nil {
-		h.handleAuctionError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, result)
-}
-
 func (h *AuctionHandler) handleAuctionError(c *gin.Context, err error) {
 	var invalidPriceErr *service.InvalidAuctionPriceError
 	if errors.As(err, &invalidPriceErr) {
@@ -213,44 +168,6 @@ func (h *AuctionHandler) handleAuctionError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":    "invalid auction duration",
 			"duration": invalidDurationErr.DurationHours,
-		})
-		return
-	}
-
-	var invalidBidAmountErr *service.InvalidAuctionBidAmountError
-	if errors.As(err, &invalidBidAmountErr) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "invalid auction bid amount",
-			"amount": invalidBidAmountErr.Amount,
-		})
-		return
-	}
-
-	var bidTooLowErr *service.AuctionBidTooLowError
-	if errors.As(err, &bidTooLowErr) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":        "auction bid too low",
-			"amount":       bidTooLowErr.Amount,
-			"requiredMore": bidTooLowErr.RequiredMore,
-		})
-		return
-	}
-
-	var noActiveBidErr *service.AuctionOrderNoActiveBidError
-	if errors.As(err, &noActiveBidErr) {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":   "auction order has no active bid",
-			"orderId": noActiveBidErr.OrderID,
-		})
-		return
-	}
-
-	var bidderInsufficientErr *service.AuctionBidderInsufficientSpiritStonesError
-	if errors.As(err, &bidderInsufficientErr) {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":    "auction highest bidder insufficient spirit stones",
-			"orderId":  bidderInsufficientErr.OrderID,
-			"required": bidderInsufficientErr.Required,
 		})
 		return
 	}

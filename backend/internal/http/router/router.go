@@ -13,6 +13,7 @@ import (
 type Dependencies struct {
 	TokenService           *service.TokenService
 	PassiveProgressService *service.PassiveProgressService
+	GameRealtimeHandler    *handler.GameRealtimeHandler
 	AuthHandler            *handler.AuthHandler
 	PlayerHandler          *handler.PlayerHandler
 	GameHandler            *handler.GameHandler
@@ -20,6 +21,7 @@ type Dependencies struct {
 	AuctionHandler         *handler.AuctionHandler
 	ChatHandler            *handler.ChatHandler
 	RechargeHandler        *handler.RechargeHandler
+	AdminHandler           *handler.AdminHandler
 }
 
 func New(deps Dependencies) *gin.Engine {
@@ -42,6 +44,7 @@ func New(deps Dependencies) *gin.Engine {
 	}
 
 	api.GET("/chat/connect", deps.ChatHandler.Connect)
+	api.GET("/game/realtime/connect", deps.GameRealtimeHandler.Connect)
 	api.GET("/recharge/callback/credit-linux-do", deps.RechargeHandler.CreditLinuxDoCallback)
 	api.POST("/recharge/callback/credit-linux-do", deps.RechargeHandler.CreditLinuxDoCallback)
 
@@ -61,8 +64,6 @@ func New(deps Dependencies) *gin.Engine {
 		authed.POST("/auction/create", deps.AuctionHandler.Create)
 		authed.POST("/auction/cancel", deps.AuctionHandler.Cancel)
 		authed.POST("/auction/buy", deps.AuctionHandler.Buy)
-		authed.POST("/auction/bid", deps.AuctionHandler.Bid)
-		authed.POST("/auction/accept-bid", deps.AuctionHandler.AcceptBid)
 		authed.GET("/auction/my-orders", deps.AuctionHandler.MyOrders)
 		authed.GET("/chat/history", deps.ChatHandler.History)
 		authed.GET("/chat/mute-status", deps.ChatHandler.MuteStatus)
@@ -73,11 +74,21 @@ func New(deps Dependencies) *gin.Engine {
 		authed.GET("/chat/admin/block-words", deps.ChatHandler.AdminBlockWords)
 		authed.POST("/chat/admin/block-words", deps.ChatHandler.AdminUpsertBlockWord)
 		authed.DELETE("/chat/admin/block-words", deps.ChatHandler.AdminDeleteBlockWord)
+		authed.GET("/admin/me", deps.AdminHandler.Me)
+		authed.GET("/admin/users", deps.AdminHandler.ListUsers)
+		authed.POST("/admin/users", deps.AdminHandler.UpsertUser)
+		authed.DELETE("/admin/users", deps.AdminHandler.DeleteUser)
+		authed.GET("/admin/runtime-configs", deps.AdminHandler.RuntimeConfigs)
+		authed.GET("/admin/runtime-config-audits", deps.AdminHandler.RuntimeConfigAudits)
+		authed.POST("/admin/runtime-configs", deps.AdminHandler.RuntimeConfigUpsert)
 		authed.GET("/recharge/products", deps.RechargeHandler.Products)
 		authed.GET("/recharge/orders", deps.RechargeHandler.Orders)
 		authed.POST("/recharge/orders", deps.RechargeHandler.CreateOrder)
 		authed.POST("/recharge/orders/mock-paid", deps.RechargeHandler.MockPaid)
 		authed.POST("/recharge/orders/sync", deps.RechargeHandler.SyncOrder)
+		authed.GET("/game/meditation/status", deps.GameHandler.MeditationStatus)
+		authed.POST("/game/meditation/start", deps.GameHandler.MeditationStart)
+		authed.POST("/game/meditation/stop", deps.GameHandler.MeditationStop)
 		authed.POST("/game/cultivation/once", deps.GameHandler.CultivationOnce)
 		authed.POST("/game/cultivation/until-breakthrough", deps.GameHandler.CultivationUntilBreakthrough)
 		authed.GET("/game/hunting/maps", deps.GameHandler.HuntingMaps)

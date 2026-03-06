@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -98,19 +99,32 @@ func (s *InventoryService) UseItem(ctx context.Context, userID uuid.UUID, itemID
 	switch itemType {
 	case "pill":
 		now := time.Now().UnixMilli()
-		effect := inventoryReadMap(item["effect"])
-		activeEffect := map[string]any{}
-		for key, value := range effect {
-			activeEffect[key] = value
-		}
-		duration := inventoryReadInt(activeEffect["duration"], 0)
-		activeEffect["startTime"] = now
-		activeEffect["endTime"] = now + int64(duration)*1000
-		state.ActiveEffects = append(state.ActiveEffects, activeEffect)
 		state.ActiveEffects = inventoryFilterActiveEffects(state.ActiveEffects, now)
-
+		effect := inventoryReadMap(item["effect"])
+		effectType := inventoryReadString(effect["type"])
+		if effectType == "spiritRecovery" {
+			restoreAmount := calculateSpiritRecoveryAmount(state.Level, state.SpiritRate, state.ActiveEffects, effect, now)
+			_, bonus := resolveMeditationEffectBonus(state.ActiveEffects, now)
+			spiritCap := resolveMeditationSpiritCap(state.Level, bonus)
+			targetCap := recoverableSpiritCap(math.Max(0, state.Spirit), spiritCap)
+			beforeSpirit := math.Max(0, state.Spirit)
+			state.Spirit = beforeSpirit + restoreAmount
+			if state.Spirit > targetCap {
+				state.Spirit = targetCap
+			}
+			message = fmt.Sprintf("服用回灵丹，恢复%.1f点灵力", math.Max(0, state.Spirit-beforeSpirit))
+		} else {
+			activeEffect := map[string]any{}
+			for key, value := range effect {
+				activeEffect[key] = value
+			}
+			duration := inventoryReadInt(activeEffect["duration"], 0)
+			activeEffect["startTime"] = now
+			activeEffect["endTime"] = now + int64(duration)*1000
+			state.ActiveEffects = append(state.ActiveEffects, activeEffect)
+			message = "使用丹药成功"
+		}
 		state.Items = append(state.Items[:index], state.Items[index+1:]...)
-		message = "使用丹药成功"
 	case "pet":
 		if state.ActivePetID == itemID {
 			inventoryApplyPetBonus(state, item, -1)
@@ -525,6 +539,9 @@ func (s *InventoryService) EvolvePet(ctx context.Context, userID uuid.UUID, item
 }
 
 type inventoryState struct {
+	Level             int
+	Spirit            float64
+	SpiritRate        float64
 	ReinforceStones   int64
 	PetEssence        int64
 	ActivePetID       string
@@ -539,6 +556,9 @@ type inventoryState struct {
 func loadInventoryState(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*inventoryState, error) {
 	const query = `
 		SELECT
+			pp.level,
+			pr.spirit,
+			pr.spirit_rate,
 			pr.reinforce_stones,
 			COALESCE(pr.pet_essence, 0),
 			pa.base_attributes,
@@ -548,11 +568,12 @@ func loadInventoryState(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*inve
 			COALESCE(pis.items, '[]'::jsonb),
 			COALESCE(pis.active_pet_id, ''),
 			COALESCE(pis.active_effects, '[]'::jsonb)
-		FROM player_resources pr
-		JOIN player_attributes pa ON pa.user_id = pr.user_id
-		JOIN player_inventory_state pis ON pis.user_id = pr.user_id
-		WHERE pr.user_id = $1
-		FOR UPDATE OF pr, pa, pis
+		FROM player_profiles pp
+		JOIN player_resources pr ON pr.user_id = pp.user_id
+		JOIN player_attributes pa ON pa.user_id = pp.user_id
+		JOIN player_inventory_state pis ON pis.user_id = pp.user_id
+		WHERE pp.user_id = $1
+		FOR UPDATE OF pp, pr, pa, pis
 	`
 
 	state := &inventoryState{}
@@ -563,6 +584,9 @@ func loadInventoryState(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*inve
 	var itemsRaw []byte
 	var effectsRaw []byte
 	if err := tx.QueryRow(ctx, query, userID).Scan(
+		&state.Level,
+		&state.Spirit,
+		&state.SpiritRate,
 		&state.ReinforceStones,
 		&state.PetEssence,
 		&baseRaw,
@@ -625,10 +649,10 @@ func persistInventoryState(ctx context.Context, tx pgx.Tx, userID uuid.UUID, sta
 
 	const updateResourcesSQL = `
 		UPDATE player_resources
-		SET reinforce_stones = $2, pet_essence = $3, updated_at = now()
+		SET spirit = $2, reinforce_stones = $3, pet_essence = $4, updated_at = now()
 		WHERE user_id = $1
 	`
-	if _, err := tx.Exec(ctx, updateResourcesSQL, userID, state.ReinforceStones, state.PetEssence); err != nil {
+	if _, err := tx.Exec(ctx, updateResourcesSQL, userID, state.Spirit, state.ReinforceStones, state.PetEssence); err != nil {
 		return fmt.Errorf("update inventory resources: %w", err)
 	}
 

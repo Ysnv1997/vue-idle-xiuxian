@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,17 +23,24 @@ import (
 )
 
 type AuthHandler struct {
-	cfg         config.Config
-	authService *service.AuthService
-	userRepo    *repository.UserRepository
-	httpClient  *http.Client
+	cfg          config.Config
+	authService  *service.AuthService
+	userRepo     *repository.UserRepository
+	adminService *service.AdminService
+	httpClient   *http.Client
 }
 
-func NewAuthHandler(cfg config.Config, authService *service.AuthService, userRepo *repository.UserRepository) *AuthHandler {
+func NewAuthHandler(
+	cfg config.Config,
+	authService *service.AuthService,
+	userRepo *repository.UserRepository,
+	adminService *service.AdminService,
+) *AuthHandler {
 	return &AuthHandler{
-		cfg:         cfg,
-		authService: authService,
-		userRepo:    userRepo,
+		cfg:          cfg,
+		authService:  authService,
+		userRepo:     userRepo,
+		adminService: adminService,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -142,6 +150,12 @@ func (h *AuthHandler) LinuxDoCallback(c *gin.Context) {
 
 	accessToken, err := h.exchangeCodeForAccessToken(c.Request.Context(), code)
 	if err != nil {
+		log.Printf(
+			"linux.do oauth token exchange failed: err=%v token_url=%s redirect_url=%s",
+			err,
+			h.cfg.LinuxDoTokenURL,
+			h.cfg.LinuxDoRedirectURL,
+		)
 		h.redirectOAuthFailure(c, c.Query("state"), "token_exchange_failed")
 		return
 	}
@@ -221,12 +235,28 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		return
 	}
 
+	adminProfile := service.AdminPermissionProfile{}
+	if h.adminService != nil {
+		profile, err := h.adminService.PermissionProfileByLinuxDoUserID(c.Request.Context(), user.LinuxDoUserID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "query admin status failed"})
+			return
+		}
+		adminProfile = profile
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"id":            user.ID,
-		"linuxDoUserId": user.LinuxDoUserID,
-		"username":      user.LinuxDoUsername,
-		"avatar":        user.LinuxDoAvatar,
-		"lastLoginAt":   user.LastLoginAt,
+		"id":                      user.ID,
+		"linuxDoUserId":           user.LinuxDoUserID,
+		"username":                user.LinuxDoUsername,
+		"avatar":                  user.LinuxDoAvatar,
+		"lastLoginAt":             user.LastLoginAt,
+		"isAdmin":                 adminProfile.IsAdmin,
+		"adminRole":               adminProfile.Role,
+		"isSuperAdmin":            adminProfile.IsSuperAdmin,
+		"canManageAdmins":         adminProfile.CanManageAdmins,
+		"canManageRuntimeConfigs": adminProfile.CanManageRuntimeConfigs,
+		"canModerateChat":         adminProfile.CanModerateChat,
 	})
 }
 

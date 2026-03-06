@@ -36,25 +36,27 @@ var chatDefaultWordBlock = []string{
 }
 
 type ChatService struct {
-	pool      *pgxpool.Pool
-	userRepo  *repository.UserRepository
-	mu        sync.Mutex
-	lastSent  map[uuid.UUID]time.Time
-	minGap    time.Duration
-	wordMu    sync.RWMutex
-	wordBlock []string
-	wordTTL   time.Duration
-	wordAt    time.Time
+	pool          *pgxpool.Pool
+	userRepo      *repository.UserRepository
+	runtimeConfig *RuntimeConfigService
+	mu            sync.Mutex
+	lastSent      map[uuid.UUID]time.Time
+	minGap        time.Duration
+	wordMu        sync.RWMutex
+	wordBlock     []string
+	wordTTL       time.Duration
+	wordAt        time.Time
 }
 
-func NewChatService(pool *pgxpool.Pool, userRepo *repository.UserRepository) *ChatService {
+func NewChatService(pool *pgxpool.Pool, userRepo *repository.UserRepository, runtimeConfig *RuntimeConfigService) *ChatService {
 	s := &ChatService{
-		pool:      pool,
-		userRepo:  userRepo,
-		lastSent:  make(map[uuid.UUID]time.Time),
-		minGap:    3 * time.Second,
-		wordBlock: cloneChatWords(chatDefaultWordBlock),
-		wordTTL:   chatWordBlockTTL,
+		pool:          pool,
+		userRepo:      userRepo,
+		runtimeConfig: runtimeConfig,
+		lastSent:      make(map[uuid.UUID]time.Time),
+		minGap:        3 * time.Second,
+		wordBlock:     cloneChatWords(chatDefaultWordBlock),
+		wordTTL:       chatWordBlockTTL,
 	}
 	loadCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -239,10 +241,11 @@ func (s *ChatService) Send(ctx context.Context, userID uuid.UUID, channel string
 	if content == "" {
 		return nil, &InvalidChatContentError{Reason: "empty"}
 	}
-	if utf8.RuneCountInString(content) > chatMaxContentRune {
+	maxContentRune := s.chatMaxContentRune(ctx)
+	if utf8.RuneCountInString(content) > maxContentRune {
 		return nil, &InvalidChatContentError{Reason: "too_long"}
 	}
-	if err := s.checkRateLimit(userID); err != nil {
+	if err := s.checkRateLimit(ctx, userID); err != nil {
 		return nil, err
 	}
 	if err := s.checkMuted(ctx, userID); err != nil {
@@ -407,7 +410,8 @@ func (s *ChatService) MuteByLinuxDoUserID(
 	if targetLinuxDoUserID == "" {
 		return nil, &ChatTargetUserNotFoundError{LinuxDoUserID: targetLinuxDoUserID}
 	}
-	if durationMinutes <= 0 || durationMinutes > 7*24*60 {
+	maxMuteMinutes := s.chatAdminMaxMuteMinutes(ctx)
+	if durationMinutes <= 0 || durationMinutes > maxMuteMinutes {
 		return nil, &InvalidChatMuteDurationError{DurationMinutes: durationMinutes}
 	}
 	reason = strings.TrimSpace(reason)
@@ -717,6 +721,8 @@ func (s *ChatService) insertChatAdminRiskEventTx(ctx context.Context, tx pgx.Tx,
 }
 
 func (s *ChatService) maybeRefreshBlockedWords(ctx context.Context) {
+	s.syncWordTTLFromRuntimeConfig(ctx)
+
 	s.wordMu.RLock()
 	shouldRefresh := s.wordAt.IsZero() || time.Since(s.wordAt) >= s.wordTTL
 	s.wordMu.RUnlock()
@@ -777,7 +783,9 @@ func (s *ChatService) checkMuted(ctx context.Context, userID uuid.UUID) error {
 	return &ChatMutedError{MutedUntil: *status.MutedUntil}
 }
 
-func (s *ChatService) checkRateLimit(userID uuid.UUID) error {
+func (s *ChatService) checkRateLimit(ctx context.Context, userID uuid.UUID) error {
+	s.syncMinGapFromRuntimeConfig(ctx)
+
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -790,6 +798,42 @@ func (s *ChatService) checkRateLimit(userID uuid.UUID) error {
 	}
 	s.lastSent[userID] = now
 	return nil
+}
+
+func (s *ChatService) chatMaxContentRune(ctx context.Context) int {
+	if s.runtimeConfig == nil {
+		return chatMaxContentRune
+	}
+	return s.runtimeConfig.GetInt(ctx, RuntimeConfigKeyChatMessageMaxRunes, chatMaxContentRune, 20, 2000)
+}
+
+func (s *ChatService) chatAdminMaxMuteMinutes(ctx context.Context) int {
+	if s.runtimeConfig == nil {
+		return 7 * 24 * 60
+	}
+	return s.runtimeConfig.GetInt(ctx, RuntimeConfigKeyChatAdminMaxMuteMinutes, 7*24*60, 1, 365*24*60)
+}
+
+func (s *ChatService) syncMinGapFromRuntimeConfig(ctx context.Context) {
+	if s.runtimeConfig == nil {
+		return
+	}
+	minGapMS := s.runtimeConfig.GetInt(ctx, RuntimeConfigKeyChatSendMinGapMS, 3000, 200, 60000)
+	minGap := time.Duration(minGapMS) * time.Millisecond
+	s.mu.Lock()
+	s.minGap = minGap
+	s.mu.Unlock()
+}
+
+func (s *ChatService) syncWordTTLFromRuntimeConfig(ctx context.Context) {
+	if s.runtimeConfig == nil {
+		return
+	}
+	ttlSeconds := s.runtimeConfig.GetInt(ctx, RuntimeConfigKeyChatWordCacheTTLSec, int(chatWordBlockTTL/time.Second), 5, 3600)
+	wordTTL := time.Duration(ttlSeconds) * time.Second
+	s.wordMu.Lock()
+	s.wordTTL = wordTTL
+	s.wordMu.Unlock()
 }
 
 func (s *ChatService) filterContent(content string) string {

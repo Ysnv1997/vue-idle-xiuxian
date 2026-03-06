@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,24 +38,24 @@ func NewAuctionService(pool *pgxpool.Pool, userRepo *repository.UserRepository) 
 }
 
 type AuctionOrder struct {
-	ID                  int64          `json:"id"`
-	SellerUserID        string         `json:"sellerUserId"`
-	SellerName          string         `json:"sellerName"`
-	BuyerUserID         string         `json:"buyerUserId,omitempty"`
-	HighestBid          int64          `json:"highestBid,omitempty"`
-	HighestBidderUserID string         `json:"highestBidderUserId,omitempty"`
-	ItemID              string         `json:"itemId"`
-	Item                map[string]any `json:"item"`
-	Price               int64          `json:"price"`
-	FeeRate             float64        `json:"feeRate"`
-	FeeAmount           int64          `json:"feeAmount"`
-	SellerIncome        int64          `json:"sellerIncome"`
-	Status              string         `json:"status"`
-	ExpiresAt           *time.Time     `json:"expiresAt,omitempty"`
-	CreatedAt           time.Time      `json:"createdAt"`
-	UpdatedAt           time.Time      `json:"updatedAt"`
-	ClosedAt            *time.Time     `json:"closedAt,omitempty"`
-	IsMine              bool           `json:"isMine"`
+	ID           int64          `json:"id"`
+	SellerUserID string         `json:"sellerUserId"`
+	SellerName   string         `json:"sellerName"`
+	BuyerUserID  string         `json:"buyerUserId,omitempty"`
+	ItemID       string         `json:"itemId"`
+	Item         map[string]any `json:"item"`
+	Price        int64          `json:"price"`
+	FeeRate      float64        `json:"feeRate"`
+	FeeAmount    int64          `json:"feeAmount"`
+	SellerIncome int64          `json:"sellerIncome"`
+	Status       string         `json:"status"`
+	Category     string         `json:"category"`
+	SubCategory  string         `json:"subCategory,omitempty"`
+	ExpiresAt    *time.Time     `json:"expiresAt,omitempty"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
+	ClosedAt     *time.Time     `json:"closedAt,omitempty"`
+	IsMine       bool           `json:"isMine"`
 }
 
 type AuctionListResult struct {
@@ -154,41 +155,6 @@ func (e *AuctionInsufficientSpiritStonesError) Error() string {
 	return fmt.Sprintf("insufficient spirit stones: required %d current %d", e.Required, e.Current)
 }
 
-type InvalidAuctionBidAmountError struct {
-	Amount int64
-}
-
-func (e *InvalidAuctionBidAmountError) Error() string {
-	return fmt.Sprintf("invalid auction bid amount: %d", e.Amount)
-}
-
-type AuctionBidTooLowError struct {
-	Amount       int64
-	RequiredMore int64
-}
-
-func (e *AuctionBidTooLowError) Error() string {
-	return fmt.Sprintf("auction bid too low: amount %d required_more_than %d", e.Amount, e.RequiredMore)
-}
-
-type AuctionOrderNoActiveBidError struct {
-	OrderID int64
-}
-
-func (e *AuctionOrderNoActiveBidError) Error() string {
-	return fmt.Sprintf("auction order has no active bid: %d", e.OrderID)
-}
-
-type AuctionBidderInsufficientSpiritStonesError struct {
-	OrderID  int64
-	Required int64
-	BidderID uuid.UUID
-}
-
-func (e *AuctionBidderInsufficientSpiritStonesError) Error() string {
-	return fmt.Sprintf("auction highest bidder balance changed: order %d required %d bidder %s", e.OrderID, e.Required, e.BidderID.String())
-}
-
 func (s *AuctionService) SweepExpired(ctx context.Context, limit int) (*AuctionSweepResult, error) {
 	if limit <= 0 {
 		limit = 100
@@ -246,12 +212,12 @@ func (s *AuctionService) SweepExpired(ctx context.Context, limit int) (*AuctionS
 
 	processed := 0
 	for _, order := range orders {
-		items, err := s.loadInventoryItemsForUpdate(ctx, tx, order.SellerUserID)
+		inventoryState, err := s.loadAuctionInventoryStateForUpdate(ctx, tx, order.SellerUserID)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, order.Item)
-		if err := s.updateInventoryItems(ctx, tx, order.SellerUserID, items); err != nil {
+		auctionAppendOrderItem(inventoryState, order.Item)
+		if err := s.updateAuctionInventoryState(ctx, tx, order.SellerUserID, inventoryState); err != nil {
 			return nil, err
 		}
 		if err := s.closeOrderWithStatus(ctx, tx, order.ID, "expired", uuid.Nil); err != nil {
@@ -267,7 +233,7 @@ func (s *AuctionService) SweepExpired(ctx context.Context, limit int) (*AuctionS
 	return &AuctionSweepResult{ProcessedOrders: processed}, nil
 }
 
-func (s *AuctionService) List(ctx context.Context, userID uuid.UUID, limit int, offset int) (*AuctionListResult, error) {
+func (s *AuctionService) List(ctx context.Context, userID uuid.UUID, limit int, offset int, category string, subCategory string) (*AuctionListResult, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -277,6 +243,8 @@ func (s *AuctionService) List(ctx context.Context, userID uuid.UUID, limit int, 
 	if offset < 0 {
 		offset = 0
 	}
+	category = normalizeAuctionCategory(category)
+	subCategory = normalizeAuctionSubCategory(category, subCategory)
 
 	const query = `
 		SELECT
@@ -284,8 +252,6 @@ func (s *AuctionService) List(ctx context.Context, userID uuid.UUID, limit int, 
 			ao.seller_user_id::text,
 			COALESCE(sp.player_name, ''),
 			COALESCE(ao.buyer_user_id::text, ''),
-			COALESCE(hb.amount, 0),
-			COALESCE(hb.bidder_user_id, ''),
 			ao.item_id,
 			ao.item_payload,
 			ao.price,
@@ -299,23 +265,35 @@ func (s *AuctionService) List(ctx context.Context, userID uuid.UUID, limit int, 
 			ao.closed_at
 		FROM auction_orders ao
 		JOIN player_profiles sp ON sp.user_id = ao.seller_user_id
-		LEFT JOIN LATERAL (
-			SELECT
-				ab.amount,
-				ab.bidder_user_id::text AS bidder_user_id
-			FROM auction_bids ab
-			WHERE ab.order_id = ao.id
-			  AND ab.status = 'active'
-			ORDER BY ab.amount DESC, ab.id DESC
-			LIMIT 1
-		) hb ON true
 		WHERE ao.status = 'open'
 		  AND (ao.expires_at IS NULL OR ao.expires_at > now())
+		  AND (
+			$3 = ''
+			OR (
+				CASE
+					WHEN ao.item_payload->>'type' IN ('weapon', 'head', 'body', 'legs', 'feet', 'shoulder', 'hands', 'wrist', 'necklace', 'ring1', 'ring2', 'belt', 'artifact') THEN 'equipment'
+					WHEN ao.item_payload->>'type' = 'herb' THEN 'herb'
+					WHEN ao.item_payload->>'type' = 'pill' THEN 'pill'
+					WHEN ao.item_payload->>'type' = 'pill_fragment' THEN 'pill_fragment'
+					WHEN ao.item_payload->>'type' = 'pet' THEN 'pet'
+					ELSE 'other'
+				END
+			) = $3
+		  )
+		  AND (
+			$4 = ''
+			OR (
+				CASE
+					WHEN ao.item_payload->>'type' IN ('weapon', 'head', 'body', 'legs', 'feet', 'shoulder', 'hands', 'wrist', 'necklace', 'ring1', 'ring2', 'belt', 'artifact') THEN ao.item_payload->>'type'
+					ELSE ''
+				END
+			) = $4
+		  )
 		ORDER BY ao.created_at DESC
 		LIMIT $1 OFFSET $2
 	`
 
-	rows, err := s.pool.Query(ctx, query, limit, offset)
+	rows, err := s.pool.Query(ctx, query, limit, offset, category, subCategory)
 	if err != nil {
 		return nil, fmt.Errorf("query auction list: %w", err)
 	}
@@ -350,8 +328,6 @@ func (s *AuctionService) MyOrders(ctx context.Context, userID uuid.UUID, limit i
 			ao.seller_user_id::text,
 			COALESCE(sp.player_name, ''),
 			COALESCE(ao.buyer_user_id::text, ''),
-			COALESCE(hb.amount, 0),
-			COALESCE(hb.bidder_user_id, ''),
 			ao.item_id,
 			ao.item_payload,
 			ao.price,
@@ -365,16 +341,6 @@ func (s *AuctionService) MyOrders(ctx context.Context, userID uuid.UUID, limit i
 			ao.closed_at
 		FROM auction_orders ao
 		JOIN player_profiles sp ON sp.user_id = ao.seller_user_id
-		LEFT JOIN LATERAL (
-			SELECT
-				ab.amount,
-				ab.bidder_user_id::text AS bidder_user_id
-			FROM auction_bids ab
-			WHERE ab.order_id = ao.id
-			  AND ab.status = 'active'
-			ORDER BY ab.amount DESC, ab.id DESC
-			LIMIT 1
-		) hb ON true
 		WHERE ao.seller_user_id = $1 OR ao.buyer_user_id = $1
 		ORDER BY ao.created_at DESC
 		LIMIT $2
@@ -417,26 +383,16 @@ func (s *AuctionService) Create(ctx context.Context, userID uuid.UUID, itemID st
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	items, err := s.loadInventoryItemsForUpdate(ctx, tx, userID)
+	inventoryState, err := s.loadAuctionInventoryStateForUpdate(ctx, tx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	index := auctionFindItemIndex(items, itemID)
-	if index < 0 {
-		return nil, &AuctionItemNotFoundError{ItemID: itemID}
+	item, err := auctionTakeTradableItem(inventoryState, itemID)
+	if err != nil {
+		return nil, err
 	}
-
-	item := items[index]
-	itemType := auctionReadString(item["type"])
-	if !auctionIsTradableType(itemType) {
-		return nil, &AuctionItemNotTradableError{ItemID: itemID, ItemType: itemType}
-	}
-
-	nextItems := make([]map[string]any, 0, len(items)-1)
-	nextItems = append(nextItems, items[:index]...)
-	nextItems = append(nextItems, items[index+1:]...)
-	if err := s.updateInventoryItems(ctx, tx, userID, nextItems); err != nil {
+	if err := s.updateAuctionInventoryState(ctx, tx, userID, inventoryState); err != nil {
 		return nil, err
 	}
 
@@ -511,12 +467,12 @@ func (s *AuctionService) Cancel(ctx context.Context, userID uuid.UUID, orderID i
 		return nil, &AuctionOrderInvalidStatusError{OrderID: orderID, Status: orderState.Status}
 	}
 
-	items, err := s.loadInventoryItemsForUpdate(ctx, tx, userID)
+	inventoryState, err := s.loadAuctionInventoryStateForUpdate(ctx, tx, userID)
 	if err != nil {
 		return nil, err
 	}
-	items = append(items, orderState.Item)
-	if err := s.updateInventoryItems(ctx, tx, userID, items); err != nil {
+	auctionAppendOrderItem(inventoryState, orderState.Item)
+	if err := s.updateAuctionInventoryState(ctx, tx, userID, inventoryState); err != nil {
 		return nil, err
 	}
 
@@ -578,12 +534,12 @@ func (s *AuctionService) Buy(ctx context.Context, userID uuid.UUID, orderID int6
 		return nil, err
 	}
 
-	buyerItems, err := s.loadInventoryItemsForUpdate(ctx, tx, userID)
+	buyerInventoryState, err := s.loadAuctionInventoryStateForUpdate(ctx, tx, userID)
 	if err != nil {
 		return nil, err
 	}
-	buyerItems = append(buyerItems, orderState.Item)
-	if err := s.updateInventoryItems(ctx, tx, userID, buyerItems); err != nil {
+	auctionAppendOrderItem(buyerInventoryState, orderState.Item)
+	if err := s.updateAuctionInventoryState(ctx, tx, userID, buyerInventoryState); err != nil {
 		return nil, err
 	}
 
@@ -627,182 +583,6 @@ func (s *AuctionService) Buy(ctx context.Context, userID uuid.UUID, orderID int6
 	}, nil
 }
 
-func (s *AuctionService) AcceptHighestBid(ctx context.Context, userID uuid.UUID, orderID int64) (*AuctionActionResult, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin auction accept bid transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	orderState, err := s.loadOrderForUpdate(ctx, tx, orderID)
-	if err != nil {
-		return nil, err
-	}
-	if orderState.SellerUserID != userID {
-		return nil, &AuctionOrderForbiddenError{OrderID: orderID}
-	}
-	if orderState.Status != "open" {
-		return nil, &AuctionOrderInvalidStatusError{OrderID: orderID, Status: orderState.Status}
-	}
-	if orderState.ExpiresAt != nil && orderState.ExpiresAt.Before(time.Now().UTC()) {
-		return nil, &AuctionOrderExpiredError{OrderID: orderID}
-	}
-
-	highestBid, err := s.loadHighestActiveBidForUpdate(ctx, tx, orderID)
-	if err != nil {
-		return nil, err
-	}
-	if highestBid == nil {
-		return nil, &AuctionOrderNoActiveBidError{OrderID: orderID}
-	}
-
-	buyerBalance, err := s.loadSpiritStonesForUpdate(ctx, tx, highestBid.Bidder)
-	if err != nil {
-		return nil, err
-	}
-	if buyerBalance < highestBid.Amount {
-		return nil, &AuctionBidderInsufficientSpiritStonesError{
-			OrderID:  orderID,
-			Required: highestBid.Amount,
-			BidderID: highestBid.Bidder,
-		}
-	}
-
-	sellerBalance, err := s.loadSpiritStonesForUpdate(ctx, tx, orderState.SellerUserID)
-	if err != nil {
-		return nil, err
-	}
-
-	buyerItems, err := s.loadInventoryItemsForUpdate(ctx, tx, highestBid.Bidder)
-	if err != nil {
-		return nil, err
-	}
-	buyerItems = append(buyerItems, orderState.Item)
-	if err := s.updateInventoryItems(ctx, tx, highestBid.Bidder, buyerItems); err != nil {
-		return nil, err
-	}
-
-	feeAmount := highestBid.Amount * 5 / 100
-	sellerIncome := highestBid.Amount - feeAmount
-	nextBuyerBalance := buyerBalance - highestBid.Amount
-	nextSellerBalance := sellerBalance + sellerIncome
-	if err := s.updateSpiritStones(ctx, tx, highestBid.Bidder, nextBuyerBalance); err != nil {
-		return nil, err
-	}
-	if err := s.updateSpiritStones(ctx, tx, orderState.SellerUserID, nextSellerBalance); err != nil {
-		return nil, err
-	}
-
-	if err := s.insertEconomyLogTx(ctx, tx, highestBid.Bidder, "auction_buy_bid", -highestBid.Amount, nextBuyerBalance, fmt.Sprintf("auction_order:%d", orderID)); err != nil {
-		return nil, err
-	}
-	if err := s.insertEconomyLogTx(ctx, tx, orderState.SellerUserID, "auction_sell_bid", sellerIncome, nextSellerBalance, fmt.Sprintf("auction_order:%d", orderID)); err != nil {
-		return nil, err
-	}
-
-	if err := s.updateOrderSettlement(ctx, tx, orderID, highestBid.Amount, feeAmount, sellerIncome); err != nil {
-		return nil, err
-	}
-	if err := s.closeOrderWithStatus(ctx, tx, orderID, "sold", highestBid.Bidder); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit auction accept bid transaction: %w", err)
-	}
-
-	order, err := s.getOrderByID(ctx, orderID, userID)
-	if err != nil {
-		return nil, err
-	}
-	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &AuctionActionResult{
-		Message:  "接受出价成功",
-		Order:    order,
-		Snapshot: snapshot,
-	}, nil
-}
-
-func (s *AuctionService) Bid(ctx context.Context, userID uuid.UUID, orderID int64, amount int64) (*AuctionActionResult, error) {
-	if amount <= 0 {
-		return nil, &InvalidAuctionBidAmountError{Amount: amount}
-	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin auction bid transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	orderState, err := s.loadOrderForUpdate(ctx, tx, orderID)
-	if err != nil {
-		return nil, err
-	}
-	if orderState.Status != "open" {
-		return nil, &AuctionOrderInvalidStatusError{OrderID: orderID, Status: orderState.Status}
-	}
-	if orderState.ExpiresAt != nil && orderState.ExpiresAt.Before(time.Now().UTC()) {
-		return nil, &AuctionOrderExpiredError{OrderID: orderID}
-	}
-	if orderState.SellerUserID == userID {
-		return nil, &AuctionSelfPurchaseError{OrderID: orderID}
-	}
-	if amount < orderState.Price {
-		return nil, &AuctionBidTooLowError{Amount: amount, RequiredMore: orderState.Price - 1}
-	}
-
-	currentHighest, err := s.loadHighestActiveBidForUpdate(ctx, tx, orderID)
-	if err != nil {
-		return nil, err
-	}
-	if currentHighest != nil && amount <= currentHighest.Amount {
-		return nil, &AuctionBidTooLowError{Amount: amount, RequiredMore: currentHighest.Amount}
-	}
-
-	bidderBalance, err := s.loadSpiritStonesForUpdate(ctx, tx, userID)
-	if err != nil {
-		return nil, err
-	}
-	if bidderBalance < amount {
-		return nil, &AuctionInsufficientSpiritStonesError{Required: amount, Current: bidderBalance}
-	}
-
-	const deactivateSQL = `
-		UPDATE auction_bids
-		SET status = 'outbid', updated_at = now()
-		WHERE order_id = $1
-		  AND status = 'active'
-	`
-	if _, err := tx.Exec(ctx, deactivateSQL, orderID); err != nil {
-		return nil, fmt.Errorf("deactivate active auction bids: %w", err)
-	}
-
-	const insertSQL = `
-		INSERT INTO auction_bids (order_id, bidder_user_id, amount, status, created_at, updated_at)
-		VALUES ($1, $2, $3, 'active', now(), now())
-	`
-	if _, err := tx.Exec(ctx, insertSQL, orderID, userID, amount); err != nil {
-		return nil, fmt.Errorf("insert auction bid: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit auction bid transaction: %w", err)
-	}
-
-	order, err := s.getOrderByID(ctx, orderID, userID)
-	if err != nil {
-		return nil, err
-	}
-	return &AuctionActionResult{
-		Message: "出价成功",
-		Order:   order,
-	}, nil
-}
-
 type auctionOrderState struct {
 	ID           int64
 	SellerUserID uuid.UUID
@@ -811,12 +591,6 @@ type auctionOrderState struct {
 	Status       string
 	ExpiresAt    *time.Time
 	Item         map[string]any
-}
-
-type auctionBidState struct {
-	ID     int64
-	Bidder uuid.UUID
-	Amount int64
 }
 
 func (s *AuctionService) loadOrderForUpdate(ctx context.Context, tx pgx.Tx, orderID int64) (*auctionOrderState, error) {
@@ -861,26 +635,6 @@ func (s *AuctionService) loadOrderForUpdate(ctx context.Context, tx pgx.Tx, orde
 	return state, nil
 }
 
-func (s *AuctionService) loadHighestActiveBidForUpdate(ctx context.Context, tx pgx.Tx, orderID int64) (*auctionBidState, error) {
-	const query = `
-		SELECT id, bidder_user_id, amount
-		FROM auction_bids
-		WHERE order_id = $1
-		  AND status = 'active'
-		ORDER BY amount DESC, id DESC
-		LIMIT 1
-		FOR UPDATE
-	`
-	bid := &auctionBidState{}
-	if err := tx.QueryRow(ctx, query, orderID).Scan(&bid.ID, &bid.Bidder, &bid.Amount); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("load highest active bid for update: %w", err)
-	}
-	return bid, nil
-}
-
 func (s *AuctionService) closeOrderWithStatus(ctx context.Context, tx pgx.Tx, orderID int64, status string, buyerUserID uuid.UUID) error {
 	const soldSQL = `
 		UPDATE auction_orders
@@ -897,101 +651,11 @@ func (s *AuctionService) closeOrderWithStatus(ctx context.Context, tx pgx.Tx, or
 		if _, err := tx.Exec(ctx, soldSQL, orderID, status, buyerUserID); err != nil {
 			return fmt.Errorf("update auction order status (sold): %w", err)
 		}
-		if status == "sold" {
-			const markWinnerSQL = `
-				UPDATE auction_bids
-				SET status = 'won', updated_at = now()
-				WHERE order_id = $1
-				  AND bidder_user_id = $2
-				  AND status = 'active'
-			`
-			if _, err := tx.Exec(ctx, markWinnerSQL, orderID, buyerUserID); err != nil {
-				return fmt.Errorf("mark winning auction bid: %w", err)
-			}
-			const markOthersSQL = `
-				UPDATE auction_bids
-				SET status = 'lost', updated_at = now()
-				WHERE order_id = $1
-				  AND bidder_user_id <> $2
-				  AND status = 'active'
-			`
-			if _, err := tx.Exec(ctx, markOthersSQL, orderID, buyerUserID); err != nil {
-				return fmt.Errorf("mark losing auction bids: %w", err)
-			}
-		}
 		return nil
 	}
 
 	if _, err := tx.Exec(ctx, closedSQL, orderID, status); err != nil {
 		return fmt.Errorf("update auction order status: %w", err)
-	}
-	const markBidStatusSQL = `
-		UPDATE auction_bids
-		SET status = $2, updated_at = now()
-		WHERE order_id = $1
-		  AND status = 'active'
-	`
-	bidStatus := "closed"
-	switch status {
-	case "cancelled":
-		bidStatus = "cancelled"
-	case "expired":
-		bidStatus = "expired"
-	}
-	if _, err := tx.Exec(ctx, markBidStatusSQL, orderID, bidStatus); err != nil {
-		return fmt.Errorf("update auction bid status: %w", err)
-	}
-	return nil
-}
-
-func (s *AuctionService) updateOrderSettlement(ctx context.Context, tx pgx.Tx, orderID int64, price int64, feeAmount int64, sellerIncome int64) error {
-	const query = `
-		UPDATE auction_orders
-		SET price = $2,
-		    fee_rate = $3,
-		    fee_amount = $4,
-		    seller_income = $5,
-		    updated_at = now()
-		WHERE id = $1
-	`
-	if _, err := tx.Exec(ctx, query, orderID, price, auctionFeeRate, feeAmount, sellerIncome); err != nil {
-		return fmt.Errorf("update auction order settlement: %w", err)
-	}
-	return nil
-}
-
-func (s *AuctionService) loadInventoryItemsForUpdate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]map[string]any, error) {
-	const query = `
-		SELECT COALESCE(items, '[]'::jsonb)
-		FROM player_inventory_state
-		WHERE user_id = $1
-		FOR UPDATE
-	`
-
-	var itemsRaw []byte
-	if err := tx.QueryRow(ctx, query, userID).Scan(&itemsRaw); err != nil {
-		return nil, fmt.Errorf("load inventory items for auction: %w", err)
-	}
-
-	items := []map[string]any{}
-	if err := json.Unmarshal(itemsRaw, &items); err != nil || items == nil {
-		items = []map[string]any{}
-	}
-	return items, nil
-}
-
-func (s *AuctionService) updateInventoryItems(ctx context.Context, tx pgx.Tx, userID uuid.UUID, items []map[string]any) error {
-	itemsJSON, err := json.Marshal(items)
-	if err != nil {
-		return fmt.Errorf("marshal auction inventory items: %w", err)
-	}
-	const updateSQL = `
-		UPDATE player_inventory_state
-		SET items = $2::jsonb, updated_at = now()
-		WHERE user_id = $1
-	`
-	if _, err := tx.Exec(ctx, updateSQL, userID, string(itemsJSON)); err != nil {
-		return fmt.Errorf("update auction inventory items: %w", err)
 	}
 	return nil
 }
@@ -1040,8 +704,6 @@ func (s *AuctionService) getOrderByID(ctx context.Context, orderID int64, viewer
 			ao.seller_user_id::text,
 			COALESCE(sp.player_name, ''),
 			COALESCE(ao.buyer_user_id::text, ''),
-			COALESCE(hb.amount, 0),
-			COALESCE(hb.bidder_user_id, ''),
 			ao.item_id,
 			ao.item_payload,
 			ao.price,
@@ -1055,16 +717,6 @@ func (s *AuctionService) getOrderByID(ctx context.Context, orderID int64, viewer
 			ao.closed_at
 		FROM auction_orders ao
 		JOIN player_profiles sp ON sp.user_id = ao.seller_user_id
-		LEFT JOIN LATERAL (
-			SELECT
-				ab.amount,
-				ab.bidder_user_id::text AS bidder_user_id
-			FROM auction_bids ab
-			WHERE ab.order_id = ao.id
-			  AND ab.status = 'active'
-			ORDER BY ab.amount DESC, ab.id DESC
-			LIMIT 1
-		) hb ON true
 		WHERE ao.id = $1
 	`
 
@@ -1084,12 +736,11 @@ func scanAuctionOrder(scanner interface {
 	Scan(dest ...any) error
 }, viewerID uuid.UUID) (AuctionOrder, error) {
 	var (
-		order            AuctionOrder
-		itemRaw          []byte
-		expiresAt        sql.NullTime
-		closedAt         sql.NullTime
-		buyerUserIDRaw   string
-		highestBidderRaw string
+		order          AuctionOrder
+		itemRaw        []byte
+		expiresAt      sql.NullTime
+		closedAt       sql.NullTime
+		buyerUserIDRaw string
 	)
 
 	err := scanner.Scan(
@@ -1097,8 +748,6 @@ func scanAuctionOrder(scanner interface {
 		&order.SellerUserID,
 		&order.SellerName,
 		&buyerUserIDRaw,
-		&order.HighestBid,
-		&highestBidderRaw,
 		&order.ItemID,
 		&itemRaw,
 		&order.Price,
@@ -1124,9 +773,6 @@ func scanAuctionOrder(scanner interface {
 	if buyerUserIDRaw != "" {
 		order.BuyerUserID = buyerUserIDRaw
 	}
-	if highestBidderRaw != "" {
-		order.HighestBidderUserID = highestBidderRaw
-	}
 	if expiresAt.Valid {
 		ts := expiresAt.Time.UTC()
 		order.ExpiresAt = &ts
@@ -1135,6 +781,7 @@ func scanAuctionOrder(scanner interface {
 		ts := closedAt.Time.UTC()
 		order.ClosedAt = &ts
 	}
+	order.Category, order.SubCategory = auctionResolveOrderCategory(order.Item)
 	order.IsMine = order.SellerUserID == viewerID.String()
 	return order, nil
 }
@@ -1178,9 +825,297 @@ func auctionReadString(v any) string {
 
 func auctionIsTradableType(itemType string) bool {
 	switch itemType {
-	case "pill", "weapon", "head", "body", "legs", "feet", "shoulder", "hands", "wrist", "necklace", "ring1", "ring2", "belt", "artifact":
+	case "pill", "pet", "weapon", "head", "body", "legs", "feet", "shoulder", "hands", "wrist", "necklace", "ring1", "ring2", "belt", "artifact":
 		return true
 	default:
 		return false
+	}
+}
+
+type auctionInventoryState struct {
+	ActivePetID   string
+	Herbs         []herbItem
+	PillFragments map[string]int64
+	PillRecipes   []string
+	Items         []map[string]any
+}
+
+func (s *AuctionService) loadAuctionInventoryStateForUpdate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*auctionInventoryState, error) {
+	const query = `
+		SELECT
+			COALESCE(active_pet_id, ''),
+			COALESCE(herbs, '[]'::jsonb),
+			COALESCE(pill_fragments, '{}'::jsonb),
+			COALESCE(pill_recipes, '[]'::jsonb),
+			COALESCE(items, '[]'::jsonb)
+		FROM player_inventory_state
+		WHERE user_id = $1
+		FOR UPDATE
+	`
+
+	var activePetID string
+	var herbsRaw []byte
+	var pillFragmentsRaw []byte
+	var pillRecipesRaw []byte
+	var itemsRaw []byte
+	if err := tx.QueryRow(ctx, query, userID).Scan(&activePetID, &herbsRaw, &pillFragmentsRaw, &pillRecipesRaw, &itemsRaw); err != nil {
+		return nil, fmt.Errorf("load auction inventory state: %w", err)
+	}
+
+	state := &auctionInventoryState{
+		ActivePetID:   activePetID,
+		Herbs:         []herbItem{},
+		PillFragments: map[string]int64{},
+		PillRecipes:   []string{},
+		Items:         []map[string]any{},
+	}
+	if err := json.Unmarshal(herbsRaw, &state.Herbs); err != nil || state.Herbs == nil {
+		state.Herbs = []herbItem{}
+	}
+	if err := json.Unmarshal(pillFragmentsRaw, &state.PillFragments); err != nil || state.PillFragments == nil {
+		state.PillFragments = map[string]int64{}
+	}
+	if err := json.Unmarshal(pillRecipesRaw, &state.PillRecipes); err != nil || state.PillRecipes == nil {
+		state.PillRecipes = []string{}
+	}
+	if err := json.Unmarshal(itemsRaw, &state.Items); err != nil || state.Items == nil {
+		state.Items = []map[string]any{}
+	}
+	return state, nil
+}
+
+func (s *AuctionService) updateAuctionInventoryState(ctx context.Context, tx pgx.Tx, userID uuid.UUID, state *auctionInventoryState) error {
+	herbsJSON, err := json.Marshal(state.Herbs)
+	if err != nil {
+		return fmt.Errorf("marshal auction herbs: %w", err)
+	}
+	pillFragmentsJSON, err := json.Marshal(state.PillFragments)
+	if err != nil {
+		return fmt.Errorf("marshal auction pill fragments: %w", err)
+	}
+	pillRecipesJSON, err := json.Marshal(state.PillRecipes)
+	if err != nil {
+		return fmt.Errorf("marshal auction pill recipes: %w", err)
+	}
+	itemsJSON, err := json.Marshal(state.Items)
+	if err != nil {
+		return fmt.Errorf("marshal auction items: %w", err)
+	}
+
+	const updateSQL = `
+		UPDATE player_inventory_state
+		SET herbs = $2::jsonb,
+		    pill_fragments = $3::jsonb,
+		    pill_recipes = $4::jsonb,
+		    items = $5::jsonb,
+		    updated_at = now()
+		WHERE user_id = $1
+	`
+	if _, err := tx.Exec(ctx, updateSQL, userID, string(herbsJSON), string(pillFragmentsJSON), string(pillRecipesJSON), string(itemsJSON)); err != nil {
+		return fmt.Errorf("update auction inventory state: %w", err)
+	}
+	return nil
+}
+
+func auctionTakeTradableItem(state *auctionInventoryState, itemID string) (map[string]any, error) {
+	if herbID, herbQuality, ok := auctionParseHerbListingID(itemID); ok {
+		index := auctionFindHerbIndex(state.Herbs, herbID, herbQuality)
+		if index < 0 {
+			return nil, &AuctionItemNotFoundError{ItemID: itemID}
+		}
+		herb := state.Herbs[index]
+		state.Herbs = append(state.Herbs[:index], state.Herbs[index+1:]...)
+		return map[string]any{
+			"type":        "herb",
+			"id":          herb.ID,
+			"name":        herb.Name,
+			"description": herb.Description,
+			"baseValue":   herb.BaseValue,
+			"category":    herb.Category,
+			"chance":      herb.Chance,
+			"quality":     herb.Quality,
+			"value":       herb.Value,
+		}, nil
+	}
+
+	if recipeID, ok := auctionParseFragmentListingID(itemID); ok {
+		current := state.PillFragments[recipeID]
+		if current <= 0 {
+			return nil, &AuctionItemNotFoundError{ItemID: itemID}
+		}
+		if current == 1 {
+			delete(state.PillFragments, recipeID)
+		} else {
+			state.PillFragments[recipeID] = current - 1
+		}
+		return map[string]any{
+			"type":     "pill_fragment",
+			"recipeId": recipeID,
+			"name":     auctionRecipeNameByID(recipeID),
+			"count":    int64(1),
+		}, nil
+	}
+
+	index := auctionFindItemIndex(state.Items, itemID)
+	if index < 0 {
+		return nil, &AuctionItemNotFoundError{ItemID: itemID}
+	}
+	item := state.Items[index]
+	itemType := auctionReadString(item["type"])
+	if !auctionIsTradableType(itemType) {
+		return nil, &AuctionItemNotTradableError{ItemID: itemID, ItemType: itemType}
+	}
+	if itemType == "pet" && state.ActivePetID != "" && state.ActivePetID == itemID {
+		return nil, &AuctionItemNotTradableError{ItemID: itemID, ItemType: "pet_active"}
+	}
+	state.Items = append(state.Items[:index], state.Items[index+1:]...)
+	return item, nil
+}
+
+func auctionAppendOrderItem(state *auctionInventoryState, item map[string]any) {
+	itemType := auctionReadString(item["type"])
+	switch itemType {
+	case "herb":
+		state.Herbs = append(state.Herbs, herbItem{
+			ID:          auctionReadString(item["id"]),
+			Name:        auctionReadString(item["name"]),
+			Description: auctionReadString(item["description"]),
+			BaseValue:   auctionReadInt64(item["baseValue"], 0),
+			Category:    auctionReadString(item["category"]),
+			Chance:      auctionReadFloat(item["chance"], 0),
+			Quality:     auctionReadString(item["quality"]),
+			Value:       auctionReadInt64(item["value"], 0),
+		})
+	case "pill_fragment":
+		recipeID := auctionReadString(item["recipeId"])
+		if recipeID == "" {
+			return
+		}
+		count := auctionReadInt64(item["count"], 1)
+		if count <= 0 {
+			count = 1
+		}
+		state.PillFragments[recipeID] += count
+	default:
+		state.Items = append(state.Items, item)
+	}
+}
+
+func normalizeAuctionCategory(category string) string {
+	switch strings.TrimSpace(strings.ToLower(category)) {
+	case "equipment", "herb", "pill", "pill_fragment", "pet":
+		return strings.TrimSpace(strings.ToLower(category))
+	default:
+		return ""
+	}
+}
+
+func normalizeAuctionSubCategory(category string, subCategory string) string {
+	cleaned := strings.TrimSpace(strings.ToLower(subCategory))
+	if category != "equipment" || cleaned == "" {
+		return ""
+	}
+	if inventoryIsEquipmentType(cleaned) {
+		return cleaned
+	}
+	return ""
+}
+
+func auctionResolveOrderCategory(item map[string]any) (string, string) {
+	itemType := auctionReadString(item["type"])
+	if inventoryIsEquipmentType(itemType) {
+		return "equipment", itemType
+	}
+	switch itemType {
+	case "herb":
+		return "herb", ""
+	case "pill":
+		return "pill", ""
+	case "pill_fragment":
+		return "pill_fragment", ""
+	case "pet":
+		return "pet", ""
+	default:
+		return "other", ""
+	}
+}
+
+func auctionFindHerbIndex(herbs []herbItem, herbID string, herbQuality string) int {
+	for i, herb := range herbs {
+		if herb.ID == herbID && herb.Quality == herbQuality {
+			return i
+		}
+	}
+	return -1
+}
+
+func auctionParseHerbListingID(itemID string) (string, string, bool) {
+	const prefix = "herb:"
+	if !strings.HasPrefix(itemID, prefix) {
+		return "", "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(itemID, prefix), ":", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func auctionParseFragmentListingID(itemID string) (string, bool) {
+	const prefix = "fragment:"
+	if !strings.HasPrefix(itemID, prefix) {
+		return "", false
+	}
+	recipeID := strings.TrimSpace(strings.TrimPrefix(itemID, prefix))
+	if recipeID == "" {
+		return "", false
+	}
+	return recipeID, true
+}
+
+func auctionRecipeNameByID(recipeID string) string {
+	for _, recipe := range pillRecipeDefinitions {
+		if recipe.ID == recipeID {
+			return recipe.Name
+		}
+	}
+	return recipeID
+}
+
+func auctionReadInt64(v any, fallback int64) int64 {
+	switch value := v.(type) {
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	case float64:
+		return int64(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return fallback
+		}
+		return parsed
+	default:
+		return fallback
+	}
+}
+
+func auctionReadFloat(v any, fallback float64) float64 {
+	switch value := v.(type) {
+	case float64:
+		return value
+	case int64:
+		return float64(value)
+	case int:
+		return float64(value)
+	case json.Number:
+		parsed, err := value.Float64()
+		if err != nil {
+			return fallback
+		}
+		return parsed
+	default:
+		return fallback
 	}
 }

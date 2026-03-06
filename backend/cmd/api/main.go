@@ -37,10 +37,12 @@ func main() {
 	}
 
 	userRepo := repository.NewUserRepository(pool)
+	realtimeBroker := service.NewGameRealtimeBroker()
+	runtimeConfigService := service.NewRuntimeConfigService(pool)
 	tokenService := service.NewTokenService(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	authService := service.NewAuthService(userRepo, tokenService)
-	passiveProgressService := service.NewPassiveProgressService(pool)
-	gameService := service.NewGameService(pool, userRepo)
+	passiveProgressService := service.NewPassiveProgressService(pool, runtimeConfigService, realtimeBroker)
+	gameService := service.NewGameService(pool, userRepo, runtimeConfigService, realtimeBroker)
 	explorationService := service.NewExplorationService(pool, userRepo)
 	alchemyService := service.NewAlchemyService(pool, userRepo)
 	gachaService := service.NewGachaService(pool, userRepo)
@@ -50,7 +52,8 @@ func main() {
 	achievementService := service.NewAchievementService(pool, userRepo)
 	rankingService := service.NewRankingService(pool)
 	auctionService := service.NewAuctionService(pool, userRepo)
-	chatService := service.NewChatService(pool, userRepo)
+	chatService := service.NewChatService(pool, userRepo, runtimeConfigService)
+	adminService := service.NewAdminService(pool)
 	rechargeService := service.NewRechargeService(
 		pool,
 		userRepo,
@@ -62,15 +65,32 @@ func main() {
 			ReturnURL: cfg.RechargeReturnURL,
 		},
 	)
+	if err := runtimeConfigService.EnsureDefaults(ctx); err != nil {
+		log.Fatalf("ensure runtime config defaults: %v", err)
+	}
+
 	startAuctionSweepWorker(ctx, auctionService, cfg.AuctionSweepTTL, cfg.AuctionSweepMax)
 	startHuntingSweepWorker(ctx, passiveProgressService, cfg.HuntingSweepTTL, cfg.HuntingSweepMax)
-	startChatCleanupWorker(ctx, chatService, cfg.ChatCleanupTTL, cfg.ChatRetentionTTL, cfg.ChatRetentionMax)
+	startChatCleanupWorker(
+		ctx,
+		chatService,
+		runtimeConfigService,
+		cfg.ChatCleanupTTL,
+		cfg.ChatRetentionTTL,
+		cfg.ChatRetentionMax,
+	)
 
-	authHandler := handler.NewAuthHandler(cfg, authService, userRepo)
+	if err := adminService.EnsureBootstrapAdmins(ctx, cfg.ChatAdminUserIDs); err != nil {
+		log.Fatalf("ensure bootstrap admins: %v", err)
+	}
+
+	authHandler := handler.NewAuthHandler(cfg, authService, userRepo, adminService)
 	playerHandler := handler.NewPlayerHandler(userRepo)
+	gameRealtimeHandler := handler.NewGameRealtimeHandler(tokenService, passiveProgressService, gameService, userRepo, realtimeBroker)
 	rankingHandler := handler.NewRankingHandler(rankingService)
 	auctionHandler := handler.NewAuctionHandler(auctionService)
-	chatHandler := handler.NewChatHandler(chatService, tokenService, cfg.ChatAdminUserIDs)
+	chatHandler := handler.NewChatHandler(chatService, tokenService, adminService)
+	adminHandler := handler.NewAdminHandler(adminService, runtimeConfigService)
 	rechargeHandler := handler.NewRechargeHandler(rechargeService, cfg.EnableRechargeMock)
 	gameHandler := handler.NewGameHandler(
 		gameService,
@@ -81,11 +101,13 @@ func main() {
 		equipmentService,
 		dungeonService,
 		achievementService,
+		realtimeBroker,
 	)
 
 	engine := httprouter.New(httprouter.Dependencies{
 		TokenService:           tokenService,
 		PassiveProgressService: passiveProgressService,
+		GameRealtimeHandler:    gameRealtimeHandler,
 		AuthHandler:            authHandler,
 		PlayerHandler:          playerHandler,
 		GameHandler:            gameHandler,
@@ -93,6 +115,7 @@ func main() {
 		AuctionHandler:         auctionHandler,
 		ChatHandler:            chatHandler,
 		RechargeHandler:        rechargeHandler,
+		AdminHandler:           adminHandler,
 	})
 
 	httpServer := &http.Server{
@@ -206,6 +229,7 @@ func startHuntingSweepWorker(
 func startChatCleanupWorker(
 	ctx context.Context,
 	chatService *service.ChatService,
+	runtimeConfigService *service.RuntimeConfigService,
 	interval time.Duration,
 	retentionTTL time.Duration,
 	maxMessages int,
@@ -224,7 +248,32 @@ func startChatCleanupWorker(
 		runCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		result, err := chatService.Cleanup(runCtx, retentionTTL, maxMessages)
+		retentionSeconds := int(retentionTTL / time.Second)
+		if retentionSeconds <= 0 {
+			retentionSeconds = 600
+		}
+		limitMessages := maxMessages
+		if limitMessages <= 0 {
+			limitMessages = 500
+		}
+		if runtimeConfigService != nil {
+			retentionSeconds = runtimeConfigService.GetInt(
+				runCtx,
+				service.RuntimeConfigKeyChatRetentionSeconds,
+				retentionSeconds,
+				60,
+				7*24*60*60,
+			)
+			limitMessages = runtimeConfigService.GetInt(
+				runCtx,
+				service.RuntimeConfigKeyChatRetentionMaxMessages,
+				limitMessages,
+				100,
+				50000,
+			)
+		}
+
+		result, err := chatService.Cleanup(runCtx, time.Duration(retentionSeconds)*time.Second, limitMessages)
 		if err != nil {
 			log.Printf("chat cleanup failed: %v", err)
 			return

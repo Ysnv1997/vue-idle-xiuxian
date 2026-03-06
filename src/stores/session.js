@@ -49,9 +49,9 @@ export const useSessionStore = defineStore('session', {
     async loginAsDev(payload = {}) {
       this.loading = true
       try {
-        const response = await devLogin(payload)
+        await devLogin(payload)
         this.hydrateTokens()
-        this.user = response?.user || null
+        this.user = await fetchMe()
       } finally {
         this.loading = false
       }

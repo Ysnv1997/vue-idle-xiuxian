@@ -233,7 +233,7 @@ func (r *UserRepository) GetSnapshot(ctx context.Context, userID uuid.UUID) (*Pl
 			pp.realm,
 			pp.cultivation,
 			pp.max_cultivation,
-				pr.spirit + (LEAST(GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0), 43200) * pr.spirit_rate),
+			pr.spirit,
 			pr.spirit_rate,
 			pr.luck,
 			pr.cultivation_rate,

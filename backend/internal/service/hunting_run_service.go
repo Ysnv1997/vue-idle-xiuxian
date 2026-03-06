@@ -24,8 +24,8 @@ const (
 	huntingRunStateOffline    = "offline_timeout"
 	huntingBattleStateTimeout = "timeout"
 
-	// 刷图定位为日常主升级玩法：单位灵力收益约为打坐的 2 倍。
-	huntingWinGainMultiplier = 2.0
+	// 刷图定位为日常主升级玩法：单位灵力收益默认约为打坐的 2 倍。
+	defaultHuntingWinGainMultiplier = 2.0
 )
 
 type HuntingRunStatusResult struct {
@@ -70,6 +70,7 @@ type HuntingRunTickResult struct {
 	MonsterName       string                     `json:"monsterName"`
 	EnemyTier         string                     `json:"enemyTier"`
 	SpiritCost        int64                      `json:"spiritCost"`
+	SpiritRefund      int64                      `json:"spiritRefund"`
 	CultivationGain   int64                      `json:"cultivationGain"`
 	DoubleGain        bool                       `json:"doubleGain"`
 	DoubleGainTimes   int                        `json:"doubleGainTimes"`
@@ -180,6 +181,10 @@ func (s *GameService) HuntingStart(ctx context.Context, userID uuid.UUID, mapID 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := ensureNoActiveDungeonRunTx(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+
 	if err := ensureHuntingRunRow(ctx, tx, userID); err != nil {
 		return nil, err
 	}
@@ -194,6 +199,12 @@ func (s *GameService) HuntingStart(ctx context.Context, userID uuid.UUID, mapID 
 			RequiredLevel: targetMap.MinLevel,
 			CurrentLevel:  state.Level,
 		}
+	}
+	if err := ensureMeditationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopMeditationForConflictTx(ctx, tx, userID, "进入刷怪地图，打坐已自动结束"); err != nil {
+		return nil, err
 	}
 
 	nowMilli := time.Now().UnixMilli()
@@ -240,6 +251,7 @@ func (s *GameService) HuntingStart(ctx context.Context, userID uuid.UUID, mapID 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit hunting start transaction: %w", err)
 	}
+	s.notifyRealtime(userID, GameRealtimeTopicHunting, GameRealtimeTopicMeditation, GameRealtimeTopicSnapshot)
 
 	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 	if err != nil {
@@ -294,6 +306,8 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 	if !ok {
 		return nil, &InvalidHuntingMapError{MapID: state.MapID}
 	}
+	huntingGainMultiplier := s.getHuntingWinGainMultiplier(ctx)
+	refundChance, refundMinRatio, refundMaxRatio := s.getHuntingSpiritRefundConfig(ctx)
 
 	now := time.Now()
 	nowMilli := now.UnixMilli()
@@ -311,6 +325,7 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 			if err := tx.Commit(ctx); err != nil {
 				return nil, fmt.Errorf("commit hunting reviving transaction: %w", err)
 			}
+			s.notifyRealtime(userID, GameRealtimeTopicHunting, GameRealtimeTopicSnapshot)
 			snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 			if err != nil {
 				return nil, err
@@ -369,6 +384,7 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("commit hunting revive transaction: %w", err)
 		}
+		s.notifyRealtime(userID, GameRealtimeTopicHunting, GameRealtimeTopicSnapshot)
 		snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 		if err != nil {
 			return nil, err
@@ -386,9 +402,8 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		}, nil
 	}
 
-	baseCost := currentCultivationCost(state.Level)
-	baseGain := currentCultivationGain(state.Level)
-	spiritCost := applyHuntingFactor(baseCost, targetMap.RewardFactor)
+	mapBaseGain := fixedHuntingMapBaseGain(targetMap)
+	spiritCost := fixedHuntingMapSpiritCost(targetMap)
 
 	if state.Spirit < float64(spiritCost) {
 		state.RunActive = false
@@ -436,6 +451,7 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("commit hunting exhaustion transaction: %w", err)
 		}
+		s.notifyRealtime(userID, GameRealtimeTopicHunting, GameRealtimeTopicSnapshot)
 
 		snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 		if err != nil {
@@ -476,10 +492,10 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 	cultivationGain := int64(0)
 	doubleGain := false
 	doubleGainTimes := 0
+	spiritRefund := int64(0)
 
 	if battleState == dungeonBattleStateVictory {
-		alignedGain := alignCultivationGainByCost(baseCost, baseGain, spiritCost)
-		cultivationGain = int64(math.Ceil(float64(alignedGain) * huntingWinGainMultiplier * tier.GainMultiplier))
+		cultivationGain = int64(math.Ceil(float64(mapBaseGain) * huntingGainMultiplier * tier.GainMultiplier))
 		if cultivationGain <= 0 {
 			cultivationGain = 1
 		}
@@ -501,13 +517,15 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		}
 
 		// 胜利后恢复一定生命，保证刷图可持续性。
-		baseRecoverRate := 0.10
-		totalRecoverRate := baseRecoverRate + effectBonus.AutoHealRate
-		if totalRecoverRate > 0.45 {
-			totalRecoverRate = 0.45
-		}
+		baseRecoverRate, capRecoverRate := s.getHuntingAutoHealRates(ctx)
+		totalRecoverRate := resolveHuntingHealRate(baseRecoverRate, capRecoverRate, effectBonus.AutoHealRate)
 		if totalRecoverRate > 0 {
 			dungeonHeal(player, player.Stats.MaxHealth*totalRecoverRate)
+		}
+
+		spiritRefund = rollHuntingSpiritRefund(spiritCost, refundChance, refundMinRatio, refundMaxRatio, rng)
+		if spiritRefund > 0 {
+			state.Spirit += float64(spiritRefund)
 		}
 
 		items, err := huntingDecodeItems(state.ItemsRaw)
@@ -560,6 +578,9 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		state.ReviveUntil = time.Time{}
 		state.RunUpdatedAt = now
 		logMessage := fmt.Sprintf("你击杀了%s，获得%d修为", enemy.Name, cultivationGain)
+		if spiritRefund > 0 {
+			logMessage = fmt.Sprintf("%s，返还%d灵力", logMessage, spiritRefund)
+		}
 		if hasHerbDrop {
 			logMessage = fmt.Sprintf("%s，并采得灵草%s", logMessage, herbDropped.Name)
 		}
@@ -600,6 +621,7 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		result.Message = state.LastLogMessage
 		result.State = huntingRunStateRunning
 		result.CultivationGain = cultivationGain
+		result.SpiritRefund = spiritRefund
 		result.DoubleGain = doubleGain
 		result.DoubleGainTimes = doubleGainTimes
 		result.Breakthrough = breakthrough
@@ -684,7 +706,10 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		}
 
 		nextTotalSpirit := state.TotalSpiritCost + spiritCost
-		reviveDuration := huntingReviveDuration(state.Level, targetMap)
+		reviveDuration := resolveHuntingReviveDuration(
+			huntingReviveDuration(state.Level, targetMap),
+			s.getHuntingReviveMultiplier(ctx),
+		)
 		reviveSeconds := int64(reviveDuration / time.Second)
 		if reviveSeconds < 1 {
 			reviveSeconds = 1
@@ -736,6 +761,7 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit hunting tick transaction: %w", err)
 	}
+	s.notifyRealtime(userID, GameRealtimeTopicHunting, GameRealtimeTopicSnapshot)
 
 	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 	if err != nil {
@@ -778,6 +804,7 @@ func (s *GameService) HuntingStop(ctx context.Context, userID uuid.UUID) (*Hunti
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit hunting stop transaction: %w", err)
 	}
+	s.notifyRealtime(userID, GameRealtimeTopicHunting, GameRealtimeTopicSnapshot)
 
 	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 	if err != nil {
@@ -841,7 +868,7 @@ func loadHuntingRunStateForUpdate(ctx context.Context, tx pgx.Tx, userID uuid.UU
 			pp.realm,
 			pp.cultivation,
 			pp.max_cultivation,
-			pr.spirit + (LEAST(GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0), 43200) * pr.spirit_rate),
+			pr.spirit,
 			pr.spirit_rate,
 			pr.luck,
 			pr.cultivation_rate,

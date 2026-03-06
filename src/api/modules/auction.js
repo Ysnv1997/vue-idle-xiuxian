@@ -1,9 +1,15 @@
 import { httpRequest } from '../http'
 
-export async function fetchAuctionList(limit = 20, offset = 0) {
+export async function fetchAuctionList({ limit = 20, offset = 0, category = '', subCategory = '' } = {}) {
   const params = new URLSearchParams()
   params.set('limit', String(limit))
   params.set('offset', String(offset))
+  if (category) {
+    params.set('category', category)
+  }
+  if (subCategory) {
+    params.set('subCategory', subCategory)
+  }
   return httpRequest(`/auction/list?${params.toString()}`)
 }
 
@@ -32,19 +38,5 @@ export async function buyAuctionOrder(orderId, idempotencyKey = '') {
     method: 'POST',
     body: { orderId },
     idempotencyKey
-  })
-}
-
-export async function bidAuctionOrder(orderId, amount) {
-  return httpRequest('/auction/bid', {
-    method: 'POST',
-    body: { orderId, amount }
-  })
-}
-
-export async function acceptAuctionBidOrder(orderId) {
-  return httpRequest('/auction/accept-bid', {
-    method: 'POST',
-    body: { orderId }
   })
 }

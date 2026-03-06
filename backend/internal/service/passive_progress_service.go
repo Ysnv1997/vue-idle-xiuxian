@@ -13,18 +13,22 @@ import (
 )
 
 const (
-	passiveOfflineCapDuration = 12 * time.Hour
-
 	// 后端自动推进刷图步长：1 秒结算一次，避免前端轮询依赖。
 	passiveHuntingEncounterInterval = time.Second
 )
 
 type PassiveProgressService struct {
-	pool *pgxpool.Pool
+	pool           *pgxpool.Pool
+	runtimeConfig  *RuntimeConfigService
+	realtimeBroker *GameRealtimeBroker
 }
 
-func NewPassiveProgressService(pool *pgxpool.Pool) *PassiveProgressService {
-	return &PassiveProgressService{pool: pool}
+func NewPassiveProgressService(pool *pgxpool.Pool, runtimeConfig *RuntimeConfigService, realtimeBroker *GameRealtimeBroker) *PassiveProgressService {
+	return &PassiveProgressService{
+		pool:           pool,
+		runtimeConfig:  runtimeConfig,
+		realtimeBroker: realtimeBroker,
+	}
 }
 
 func (s *PassiveProgressService) Advance(ctx context.Context, userID uuid.UUID) error {
@@ -38,19 +42,73 @@ func (s *PassiveProgressService) Advance(ctx context.Context, userID uuid.UUID) 
 		return err
 	}
 
-	state, err := loadHuntingRunStateForUpdate(ctx, tx, userID)
+	huntingState, err := loadHuntingRunStateForUpdate(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
 
-	if state.RunActive {
-		if err := advanceHuntingRunByElapsedTx(ctx, tx, userID, state, time.Now()); err != nil {
+	if huntingState.RunActive {
+		huntingGainMultiplier := s.getHuntingWinGainMultiplier(ctx)
+		offlineCapDuration := s.getHuntingOfflineCapDuration(ctx)
+		reviveMultiplier := s.getHuntingReviveMultiplier(ctx)
+		healBaseRate, healCapRate := s.getHuntingAutoHealRates(ctx)
+		refundChance, refundMinRatio, refundMaxRatio := s.getHuntingSpiritRefundConfig(ctx)
+		if err := advanceHuntingRunByElapsedTx(
+			ctx,
+			tx,
+			userID,
+			huntingState,
+			time.Now(),
+			huntingGainMultiplier,
+			offlineCapDuration,
+			reviveMultiplier,
+			healBaseRate,
+			healCapRate,
+			refundChance,
+			refundMinRatio,
+			refundMaxRatio,
+		); err != nil {
+			return err
+		}
+	}
+
+	if err := ensureMeditationRunRow(ctx, tx, userID); err != nil {
+		return err
+	}
+
+	meditationState, err := loadMeditationRunStateForUpdate(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+
+	if huntingState.RunActive && meditationState.RunActive {
+		now := time.Now()
+		meditationState.RunActive = false
+		meditationState.LastState = meditationRunStateStopped
+		meditationState.EndedAt = now
+		meditationState.RunUpdatedAt = now
+		setMeditationRunLog(meditationState, "刷图进行中，打坐已自动结束")
+		if err := updateMeditationRunTx(ctx, tx, userID, meditationState); err != nil {
+			return err
+		}
+	} else if meditationState.RunActive {
+		if err := advanceMeditationRunByElapsedTx(
+			ctx,
+			tx,
+			userID,
+			meditationState,
+			time.Now(),
+			defaultMeditationOfflineCap,
+		); err != nil {
 			return err
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit passive progress transaction: %w", err)
+	}
+	if s.realtimeBroker != nil {
+		s.realtimeBroker.Publish(userID, GameRealtimeTopicAll)
 	}
 	return nil
 }
@@ -70,7 +128,7 @@ func (s *PassiveProgressService) TouchActivity(ctx context.Context, userID uuid.
 	return nil
 }
 
-// AdvanceActiveRuns 批量推进活跃刷图中的玩家，返回本轮成功推进的用户数。
+// AdvanceActiveRuns 批量推进活跃中的玩家，返回本轮成功推进的用户数。
 func (s *PassiveProgressService) AdvanceActiveRuns(ctx context.Context, limit int) (int, error) {
 	if limit <= 0 {
 		limit = 200
@@ -78,8 +136,21 @@ func (s *PassiveProgressService) AdvanceActiveRuns(ctx context.Context, limit in
 
 	const query = `
 		SELECT user_id
-		FROM player_hunting_runs
-		WHERE is_active = TRUE
+		FROM (
+			SELECT user_id, MAX(updated_at) AS updated_at
+			FROM (
+				SELECT user_id, updated_at
+				FROM player_hunting_runs
+				WHERE is_active = TRUE
+
+				UNION ALL
+
+				SELECT user_id, updated_at
+				FROM player_meditation_runs
+				WHERE is_active = TRUE
+			) active_sources
+			GROUP BY user_id
+		) active_runs
 		ORDER BY updated_at ASC
 		LIMIT $1
 	`
@@ -112,12 +183,100 @@ func (s *PassiveProgressService) AdvanceActiveRuns(ctx context.Context, limit in
 	return processed, nil
 }
 
+func (s *PassiveProgressService) getHuntingWinGainMultiplier(ctx context.Context) float64 {
+	if s.runtimeConfig == nil {
+		return defaultHuntingWinGainMultiplier
+	}
+	return s.runtimeConfig.GetFloat64(ctx, RuntimeConfigKeyHuntingWinGainMultiplier, defaultHuntingWinGainMultiplier, 0.5, 10.0)
+}
+
+func (s *PassiveProgressService) getHuntingOfflineCapDuration(ctx context.Context) time.Duration {
+	if s.runtimeConfig == nil {
+		return defaultHuntingOfflineCap
+	}
+	seconds := s.runtimeConfig.GetInt(
+		ctx,
+		RuntimeConfigKeyHuntingOfflineCapSeconds,
+		int(defaultHuntingOfflineCap/time.Second),
+		600,
+		7*24*60*60,
+	)
+	return time.Duration(seconds) * time.Second
+}
+
+func (s *PassiveProgressService) getHuntingReviveMultiplier(ctx context.Context) float64 {
+	if s.runtimeConfig == nil {
+		return defaultHuntingReviveMultiplier
+	}
+	return s.runtimeConfig.GetFloat64(ctx, RuntimeConfigKeyHuntingReviveMultiplier, defaultHuntingReviveMultiplier, 0.2, 5.0)
+}
+
+func (s *PassiveProgressService) getHuntingAutoHealRates(ctx context.Context) (float64, float64) {
+	if s.runtimeConfig == nil {
+		return defaultHuntingAutoHealBaseRate, defaultHuntingAutoHealCapRate
+	}
+	base := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingAutoHealBaseRate,
+		defaultHuntingAutoHealBaseRate,
+		0,
+		1,
+	)
+	capRate := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingAutoHealCapRate,
+		defaultHuntingAutoHealCapRate,
+		0,
+		1,
+	)
+	if capRate < base {
+		capRate = base
+	}
+	return base, capRate
+}
+
+func (s *PassiveProgressService) getHuntingSpiritRefundConfig(ctx context.Context) (float64, float64, float64) {
+	if s.runtimeConfig == nil {
+		return defaultHuntingSpiritRefundChance, defaultHuntingSpiritRefundMinRatio, defaultHuntingSpiritRefundMaxRatio
+	}
+	chance := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingSpiritRefundChance,
+		defaultHuntingSpiritRefundChance,
+		0,
+		1,
+	)
+	minRatio := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingSpiritRefundMinRatio,
+		defaultHuntingSpiritRefundMinRatio,
+		0,
+		1,
+	)
+	maxRatio := s.runtimeConfig.GetFloat64(
+		ctx,
+		RuntimeConfigKeyHuntingSpiritRefundMaxRatio,
+		defaultHuntingSpiritRefundMaxRatio,
+		0,
+		1,
+	)
+	return resolveHuntingSpiritRefundConfig(chance, minRatio, maxRatio)
+}
+
 func advanceHuntingRunByElapsedTx(
 	ctx context.Context,
 	tx pgx.Tx,
 	userID uuid.UUID,
 	state *huntingRunState,
 	now time.Time,
+	huntingGainMultiplier float64,
+	offlineCapDuration time.Duration,
+	reviveMultiplier float64,
+	healBaseRate float64,
+	healCapRate float64,
+	refundChance float64,
+	refundMinRatio float64,
+	refundMaxRatio float64,
 ) error {
 	targetMap, ok := findHuntingMapByID(state.MapID)
 	if !ok {
@@ -144,8 +303,8 @@ func advanceHuntingRunByElapsedTx(
 
 	processDuration := elapsed
 	forceStopByOffline := false
-	if processDuration > passiveOfflineCapDuration {
-		processDuration = passiveOfflineCapDuration
+	if processDuration > offlineCapDuration {
+		processDuration = offlineCapDuration
 		forceStopByOffline = true
 	}
 	if !forceStopByOffline {
@@ -188,7 +347,11 @@ func advanceHuntingRunByElapsedTx(
 		if state.LastState == huntingRunStateReviving {
 			reviveAt := state.ReviveUntil
 			if reviveAt.IsZero() || reviveAt.Unix() <= 0 {
-				reviveAt = state.RunUpdatedAt.Add(huntingReviveDuration(state.Level, targetMap))
+				reviveDuration := resolveHuntingReviveDuration(
+					huntingReviveDuration(state.Level, targetMap),
+					reviveMultiplier,
+				)
+				reviveAt = state.RunUpdatedAt.Add(reviveDuration)
 				state.ReviveUntil = reviveAt
 			}
 			if reviveAt.After(processUntil) {
@@ -210,9 +373,8 @@ func advanceHuntingRunByElapsedTx(
 			break
 		}
 
-		baseCost := currentCultivationCost(state.Level)
-		baseGain := currentCultivationGain(state.Level)
-		spiritCost := applyHuntingFactor(baseCost, targetMap.RewardFactor)
+		mapBaseGain := fixedHuntingMapBaseGain(targetMap)
+		spiritCost := fixedHuntingMapSpiritCost(targetMap)
 		if state.Spirit < float64(spiritCost) {
 			runActive = false
 			runState = huntingRunStateExhausted
@@ -243,7 +405,10 @@ func advanceHuntingRunByElapsedTx(
 			state.CurrentHP = 0
 			state.MaxHP = player.Stats.MaxHealth
 			state.LastState = huntingRunStateReviving
-			reviveDuration := huntingReviveDuration(state.Level, targetMap)
+			reviveDuration := resolveHuntingReviveDuration(
+				huntingReviveDuration(state.Level, targetMap),
+				reviveMultiplier,
+			)
 			state.ReviveUntil = nextEncounterAt.Add(reviveDuration)
 			reviveSeconds := int64(reviveDuration / time.Second)
 			if reviveSeconds < 1 {
@@ -253,8 +418,7 @@ func advanceHuntingRunByElapsedTx(
 			continue
 		}
 
-		alignedGain := alignCultivationGainByCost(baseCost, baseGain, spiritCost)
-		cultivationGain := int64(math.Ceil(float64(alignedGain) * huntingWinGainMultiplier * tier.GainMultiplier))
+		cultivationGain := int64(math.Ceil(float64(mapBaseGain) * huntingGainMultiplier * tier.GainMultiplier))
 		if cultivationGain <= 0 {
 			cultivationGain = 1
 		}
@@ -279,13 +443,14 @@ func advanceHuntingRunByElapsedTx(
 			applyCultivationStateToHunting(state, cultivationStateView)
 		}
 
-		baseRecoverRate := 0.10
-		totalRecoverRate := baseRecoverRate + effectBonus.AutoHealRate
-		if totalRecoverRate > 0.45 {
-			totalRecoverRate = 0.45
-		}
+		totalRecoverRate := resolveHuntingHealRate(healBaseRate, healCapRate, effectBonus.AutoHealRate)
 		if totalRecoverRate > 0 {
 			dungeonHeal(player, player.Stats.MaxHealth*totalRecoverRate)
+		}
+
+		spiritRefund := rollHuntingSpiritRefund(spiritCost, refundChance, refundMinRatio, refundMaxRatio, rng)
+		if spiritRefund > 0 {
+			state.Spirit += float64(spiritRefund)
 		}
 
 		if dropped, ok := maybeHuntingDropEquipment(state.Level, targetMap, tier, rng); ok {
@@ -306,6 +471,9 @@ func advanceHuntingRunByElapsedTx(
 		state.LastState = huntingRunStateRunning
 		state.ReviveUntil = time.Time{}
 		logMessage := fmt.Sprintf("你击杀了%s，获得%d修为", enemy.Name, cultivationGain)
+		if spiritRefund > 0 {
+			logMessage = fmt.Sprintf("%s，返还%d灵力", logMessage, spiritRefund)
+		}
 		if hasHerbDrop {
 			logMessage = fmt.Sprintf("%s，并采得灵草%s", logMessage, herbDropped.Name)
 		}
@@ -342,6 +510,7 @@ func advanceHuntingRunByElapsedTx(
 		}
 	}
 
+	state.RunActive = runActive
 	state.CurrentHP = player.CurrentHealth
 	state.MaxHP = player.Stats.MaxHealth
 	if runActive {

@@ -241,6 +241,11 @@ export const usePlayerStore = defineStore('player', {
       }
     },
 
+    applyServerDelta(delta) {
+      if (!delta || typeof delta !== 'object') return
+      this.applyServerSnapshot(delta)
+    },
+
     async initializePlayer() {
       try {
         const snapshot = await fetchPlayerSnapshot()

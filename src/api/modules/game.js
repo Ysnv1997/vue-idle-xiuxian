@@ -1,4 +1,21 @@
 import { httpRequest } from '../http'
+import { API_BASE_URL } from '../../config/features'
+
+export async function getMeditationStatus() {
+  return httpRequest('/game/meditation/status')
+}
+
+export async function startMeditation() {
+  return httpRequest('/game/meditation/start', {
+    method: 'POST'
+  })
+}
+
+export async function stopMeditation() {
+  return httpRequest('/game/meditation/stop', {
+    method: 'POST'
+  })
+}
 
 export async function cultivateOnce() {
   return httpRequest('/game/cultivation/once', {
@@ -162,4 +179,21 @@ export async function inventoryReforgeEquipment(itemId) {
     method: 'POST',
     body: { itemId }
   })
+}
+
+export function buildGameRealtimeWSURL(accessToken) {
+  const origin = resolveWSBaseURL(API_BASE_URL)
+  const params = new URLSearchParams()
+  params.set('accessToken', accessToken)
+  return `${origin}/game/realtime/connect?${params.toString()}`
+}
+
+function resolveWSBaseURL(apiBaseURL) {
+  if (/^https?:\/\//i.test(apiBaseURL)) {
+    return apiBaseURL.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:')
+  }
+
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const normalizedPath = apiBaseURL.startsWith('/') ? apiBaseURL : `/${apiBaseURL}`
+  return `${wsProtocol}//${window.location.host}${normalizedPath}`
 }

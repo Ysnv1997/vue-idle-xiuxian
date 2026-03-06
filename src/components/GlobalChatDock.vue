@@ -19,12 +19,23 @@
       <n-scrollbar ref="scrollRef" class="chat-stream" trigger="none">
         <div class="chat-lines" v-if="messages.length">
           <div v-for="item in messages" :key="item.id" class="chat-line">
-            <span class="chat-line-content">{{ formatLine(item) }}</span>
-            <span class="chat-line-time">{{ formatTime(item.createdAt) }}</span>
+            <div class="chat-line-main">
+              <span class="chat-line-content">{{ formatLine(item) }}</span>
+              <span class="chat-line-time">{{ formatTime(item.createdAt) }}</span>
+            </div>
+            <n-button text size="tiny" class="chat-line-report" @click="reportMessage(item.id)">举报</n-button>
           </div>
         </div>
         <n-empty v-else description="暂无消息" />
       </n-scrollbar>
+
+      <div class="chat-status">
+        <p v-if="chatStore.muteStatus?.muted" class="chat-muted">
+          当前禁言至 {{ formatTime(chatStore.muteStatus.mutedUntil) }}
+          <span v-if="chatStore.muteStatus.reason">，原因：{{ chatStore.muteStatus.reason }}</span>
+        </p>
+        <p v-if="chatStore.lastError" class="chat-error">{{ chatStore.lastError }}</p>
+      </div>
 
       <div class="chat-compose">
         <n-input
@@ -35,24 +46,19 @@
         />
         <n-button type="primary" :disabled="!canSend" @click="send">发送</n-button>
       </div>
-
-      <p v-if="chatStore.muteStatus?.muted" class="chat-muted">
-        当前禁言至 {{ formatTime(chatStore.muteStatus.mutedUntil) }}
-        <span v-if="chatStore.muteStatus.reason">，原因：{{ chatStore.muteStatus.reason }}</span>
-      </p>
-      <p v-if="chatStore.lastError" class="chat-error">{{ chatStore.lastError }}</p>
     </div>
   </section>
 </template>
 
 <script setup>
   import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-  import { useMessage } from 'naive-ui'
+  import { useDialog, useMessage } from 'naive-ui'
   import { useChatStore } from '../stores/chat'
   import { getAccessToken } from '../api/token-storage'
 
   const chatStore = useChatStore()
   const message = useMessage()
+  const dialog = useDialog()
   const draft = ref('')
   const isCollapsed = ref(false)
   const scrollRef = ref(null)
@@ -124,6 +130,24 @@
     }
   }
 
+  const reportMessage = messageId => {
+    if (!messageId) return
+    dialog.warning({
+      title: '举报消息',
+      content: '确认举报该条消息？',
+      positiveText: '确认',
+      negativeText: '取消',
+      onPositiveClick: async () => {
+        try {
+          await chatStore.report(messageId, 'player_report')
+          message.success('举报已提交')
+        } catch (error) {
+          message.error(error?.message || '举报失败')
+        }
+      }
+    })
+  }
+
   onMounted(async () => {
     await ensureChatReady()
   })
@@ -153,6 +177,13 @@
     background: color-mix(in srgb, var(--panel-bg) 92%, transparent);
     backdrop-filter: blur(10px);
     box-shadow: 0 14px 30px rgba(20, 22, 26, 0.2);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .chat-dock:not(.collapsed) {
+    height: 220px;
   }
 
   .chat-head {
@@ -177,10 +208,18 @@
 
   .chat-body {
     padding: 8px 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .chat-stream {
-    max-height: 220px;
+    flex: 1;
+    min-height: 0;
+    height: auto;
     border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
     border-radius: 10px;
     padding: 4px 8px;
@@ -193,15 +232,24 @@
 
   .chat-line {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 8px;
     padding: 6px 2px;
     border-bottom: 1px dashed color-mix(in srgb, var(--panel-border) 85%, transparent);
   }
 
   .chat-line:last-child {
     border-bottom: none;
+  }
+
+  .chat-line-main {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
   }
 
   .chat-line-content {
@@ -219,19 +267,30 @@
     line-height: 1.4;
   }
 
+  .chat-line-report {
+    flex-shrink: 0;
+  }
+
   .chat-compose {
-    margin-top: 8px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
     align-items: center;
+    flex-shrink: 0;
+  }
+
+  .chat-status {
+    min-height: 0;
   }
 
   .chat-muted,
   .chat-error {
-    margin-top: 6px;
+    margin: 0;
     font-size: 12px;
     line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .chat-muted {
@@ -246,10 +305,6 @@
     .chat-dock {
       bottom: 6px;
       width: calc(100vw - 12px);
-    }
-
-    .chat-stream {
-      max-height: 180px;
     }
   }
 </style>

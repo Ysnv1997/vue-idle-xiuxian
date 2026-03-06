@@ -51,10 +51,9 @@ All endpoints are served under the `/api/v1` prefix.
 - `POST /api/v1/auction/create` (requires Bearer access token)
 - `POST /api/v1/auction/cancel` (requires Bearer access token)
 - `POST /api/v1/auction/buy` (requires Bearer access token)
-- `POST /api/v1/auction/bid` (requires Bearer access token)
-- `POST /api/v1/auction/accept-bid` (requires Bearer access token)
 - `GET /api/v1/auction/my-orders?limit=20` (requires Bearer access token)
 - `WS /api/v1/chat/connect?accessToken=...`
+- `WS /api/v1/game/realtime/connect?accessToken=...`
 - `GET /api/v1/chat/history?channel=world&limit=50` (requires Bearer access token)
 - `GET /api/v1/chat/mute-status` (requires Bearer access token)
 - `POST /api/v1/chat/report` (requires Bearer access token)
@@ -64,6 +63,13 @@ All endpoints are served under the `/api/v1` prefix.
 - `GET /api/v1/chat/admin/block-words?includeDisabled=true&limit=200` (requires Bearer access token + chat admin)
 - `POST /api/v1/chat/admin/block-words` (requires Bearer access token + chat admin)
 - `DELETE /api/v1/chat/admin/block-words?word=` (requires Bearer access token + chat admin)
+- `GET /api/v1/admin/me` (requires Bearer access token)
+- `GET /api/v1/admin/users?limit=200` (requires Bearer access token + `super_admin`)
+- `POST /api/v1/admin/users` (requires Bearer access token + `super_admin`)
+- `DELETE /api/v1/admin/users?linuxDoUserId=` (requires Bearer access token + `super_admin`)
+- `GET /api/v1/admin/runtime-configs?category=&q=&limit=300` (requires Bearer access token + `super_admin|ops_admin`)
+- `POST /api/v1/admin/runtime-configs` (requires Bearer access token + `super_admin|ops_admin`)
+- `GET /api/v1/admin/runtime-config-audits?key=&category=&limit=200` (requires Bearer access token + `super_admin|ops_admin`)
 - `GET /api/v1/recharge/products` (requires Bearer access token)
 - `GET /api/v1/recharge/orders?limit=20` (requires Bearer access token)
 - `POST /api/v1/recharge/orders` (requires Bearer access token)
@@ -96,9 +102,14 @@ All endpoints are served under the `/api/v1` prefix.
 - Dungeon next-turn supports optional payload:
   - `{"selectedOptionId":"..."}`
   - `{"refreshOptions":true}`
-- Chat admin users are configured by `CHAT_ADMIN_USER_IDS` (comma-separated Linux.do user IDs).
+- `CHAT_ADMIN_USER_IDS` is now a bootstrap seed only; real admin list is persisted in `game_admin_users` and managed via admin APIs/UI.
+- Admin roles:
+  - `super_admin`: full admin permissions
+  - `ops_admin`: runtime config management
+  - `chat_admin`: chat moderation
 - Chat blocked words are stored in `chat_block_words` and can be managed via chat admin APIs.
 - Chat admin mute/unmute/block-word actions are audited in `risk_events` (`event_type=chat_admin_action`).
+- Runtime config changes are audited in `game_runtime_config_audit_logs`.
 - Recharge (Linux.do Credit EasyPay) relies on:
   - `RECHARGE_EPAY_PID`
   - `RECHARGE_EPAY_KEY`
@@ -107,7 +118,9 @@ All endpoints are served under the `/api/v1` prefix.
 - Expired auction orders are swept automatically by worker:
   - `AUCTION_SWEEP_INTERVAL_SECONDS`
   - `AUCTION_SWEEP_BATCH_SIZE`
-- Auction seller can accept current highest bid to settle the order via `POST /api/v1/auction/accept-bid`.
 - Hunting runs are advanced by backend worker (in addition to request-triggered sync):
-  - `HUNTING_SWEEP_INTERVAL_SECONDS`
-  - `HUNTING_SWEEP_BATCH_SIZE`
+- Game realtime websocket pushes `player.snapshot`, `game.meditation`, `game.hunting`; updates are event-driven by workers and gameplay actions, with a 30s keepalive sync.
+- Realtime broker merges burst notifications per user before websocket sync, reducing duplicate push work during rapid combat/resource updates.
+- Passive progress middleware now only records activity heartbeat; authoritative progression is driven by workers and game realtime websocket sync.
+- `HUNTING_SWEEP_INTERVAL_SECONDS`
+- `HUNTING_SWEEP_BATCH_SIZE`

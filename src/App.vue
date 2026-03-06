@@ -87,19 +87,91 @@
                       </div>
 
                       <n-collapse arrow-placement="right" class="detail-collapse">
-                        <n-collapse-item title="战斗参数" name="combat">
+                        <n-collapse-item title="基础属性" name="base">
+                          <n-descriptions :column="2" bordered size="small">
+                            <n-descriptions-item label="攻击力">
+                              {{ formatInt(playerStore.baseAttributes.attack) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="生命值">
+                              {{ formatInt(playerStore.baseAttributes.health) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="防御力">
+                              {{ formatInt(playerStore.baseAttributes.defense) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="速度">
+                              {{ formatInt(playerStore.baseAttributes.speed) }}
+                            </n-descriptions-item>
+                          </n-descriptions>
+                        </n-collapse-item>
+
+                        <n-collapse-item title="战斗属性" name="combat">
                           <n-descriptions :column="2" bordered size="small">
                             <n-descriptions-item label="暴击率">
-                              {{ (playerStore.combatAttributes.critRate * 100).toFixed(1) }}%
+                              {{ formatPercent(playerStore.combatAttributes.critRate) }}
                             </n-descriptions-item>
-                            <n-descriptions-item label="闪避率">
-                              {{ (playerStore.combatAttributes.dodgeRate * 100).toFixed(1) }}%
+                            <n-descriptions-item label="眩晕率">
+                              {{ formatPercent(playerStore.combatAttributes.stunRate) }}
                             </n-descriptions-item>
                             <n-descriptions-item label="连击率">
-                              {{ (playerStore.combatAttributes.comboRate * 100).toFixed(1) }}%
+                              {{ formatPercent(playerStore.combatAttributes.comboRate) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="闪避率">
+                              {{ formatPercent(playerStore.combatAttributes.dodgeRate) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="反击率">
+                              {{ formatPercent(playerStore.combatAttributes.counterRate) }}
                             </n-descriptions-item>
                             <n-descriptions-item label="吸血率">
-                              {{ (playerStore.combatAttributes.vampireRate * 100).toFixed(1) }}%
+                              {{ formatPercent(playerStore.combatAttributes.vampireRate) }}
+                            </n-descriptions-item>
+                          </n-descriptions>
+                        </n-collapse-item>
+
+                        <n-collapse-item title="战斗抗性" name="resistance">
+                          <n-descriptions :column="2" bordered size="small">
+                            <n-descriptions-item label="暴击抗性">
+                              {{ formatPercent(playerStore.combatResistance.critResist) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="眩晕抗性">
+                              {{ formatPercent(playerStore.combatResistance.stunResist) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="连击抗性">
+                              {{ formatPercent(playerStore.combatResistance.comboResist) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="闪避抗性">
+                              {{ formatPercent(playerStore.combatResistance.dodgeResist) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="反击抗性">
+                              {{ formatPercent(playerStore.combatResistance.counterResist) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="吸血抗性">
+                              {{ formatPercent(playerStore.combatResistance.vampireResist) }}
+                            </n-descriptions-item>
+                          </n-descriptions>
+                        </n-collapse-item>
+
+                        <n-collapse-item title="特殊属性" name="special">
+                          <n-descriptions :column="2" bordered size="small">
+                            <n-descriptions-item label="治疗提升">
+                              {{ formatPercent(playerStore.specialAttributes.healBoost) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="战斗提升">
+                              {{ formatPercent(playerStore.specialAttributes.combatBoost) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="暴伤提升">
+                              {{ formatPercent(playerStore.specialAttributes.critDamageBoost) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="抗性提升">
+                              {{ formatPercent(playerStore.specialAttributes.resistanceBoost) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="暴伤减免">
+                              {{ formatPercent(playerStore.specialAttributes.critDamageReduce) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="最终增伤">
+                              {{ formatPercent(playerStore.specialAttributes.finalDamageBoost) }}
+                            </n-descriptions-item>
+                            <n-descriptions-item label="最终减伤">
+                              {{ formatPercent(playerStore.specialAttributes.finalDamageReduce) }}
                             </n-descriptions-item>
                           </n-descriptions>
                         </n-collapse-item>
@@ -138,10 +210,11 @@
 </template>
 
 <script setup>
-  import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
+  import { computed, h, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
   import { useRouter, useRoute } from 'vue-router'
   import { NIcon, darkTheme } from 'naive-ui'
   import {
+    BarChartOutlined,
     AppstoreOutlined,
     BookOutlined,
     CompassOutlined,
@@ -150,7 +223,8 @@
     HomeOutlined,
     MedicineBoxOutlined,
     SettingOutlined,
-    TrophyOutlined
+    TrophyOutlined,
+    WalletOutlined
   } from '@ant-design/icons-vue'
   import { Moon, Sunny, Flash } from '@vicons/ionicons5'
 
@@ -158,11 +232,13 @@
   import { getRealmName } from './plugins/realm'
   import { fetchActivePlayerCount } from './api/modules/player'
   import { usePlayerStore } from './stores/player'
+  import { useGameRealtimeStore } from './stores/game-realtime'
   import { useSessionStore } from './stores/session'
 
   const router = useRouter()
   const route = useRoute()
   const playerStore = usePlayerStore()
+  const gameRealtimeStore = useGameRealtimeStore()
   const sessionStore = useSessionStore()
 
   const menuOptions = ref([])
@@ -170,9 +246,8 @@
   const isLoading = ref(true)
   const isCompact = ref(false)
 
-  const snapshotSyncIntervalMs = 3000
   const activeUsersSyncIntervalMs = 300000
-  let snapshotTimer = null
+  const appTitle = '修仙大世界'
   let activeUsersTimer = null
   const activePlayers = ref(0)
   const activeWindowHours = ref(12)
@@ -189,8 +264,42 @@
   })
   const showGameShell = computed(() => sessionStore.isAuthenticated)
   const showGlobalChatDock = computed(() => showGameShell.value && !isLoading.value)
+  const titleActivity = computed(() => {
+    if (!sessionStore.isAuthenticated) {
+      return '未登录'
+    }
+
+    const huntingRun = gameRealtimeStore.huntingRun
+    if (huntingRun?.isActive) {
+      const mapName = String(huntingRun.mapName || huntingRun.mapId || '').trim()
+      const huntingState = String(huntingRun.state || '').trim()
+      if (huntingState === 'reviving') {
+        return mapName ? `正在${mapName}中复活` : '正在刷图复活'
+      }
+      return mapName ? `正在${mapName}中战斗` : '正在刷图战斗'
+    }
+
+    const meditationRun = gameRealtimeStore.meditationRun
+    if (meditationRun?.isActive) {
+      return '正在打坐'
+    }
+
+    const currentPath = String(route.path || '')
+    if (currentPath.startsWith('/dungeon')) {
+      return '正在秘境探索'
+    }
+    if (currentPath.startsWith('/exploration')) {
+      return '正在探索'
+    }
+    if (currentPath.startsWith('/alchemy')) {
+      return '正在炼丹'
+    }
+    return '空闲中'
+  })
 
   const formatNumber = value => Number(value || 0).toLocaleString()
+  const formatInt = value => Math.floor(Number(value || 0)).toLocaleString()
+  const formatPercent = value => `${(Number(value || 0) * 100).toFixed(1)}%`
 
   const renderIcon = icon => {
     return () => h(NIcon, null, { default: () => h(icon) })
@@ -245,7 +354,7 @@
       {
         label: '排行',
         key: 'ranking',
-        icon: renderIcon(TrophyOutlined)
+        icon: renderIcon(BarChartOutlined)
       },
       {
         label: '拍卖',
@@ -255,7 +364,7 @@
       {
         label: '充值',
         key: 'recharge',
-        icon: renderIcon(AppstoreOutlined)
+        icon: renderIcon(WalletOutlined)
       },
       {
         label: '设置',
@@ -273,18 +382,10 @@
     router.push(`/${key}`)
   }
 
-  const startSnapshotPolling = () => {
-    if (snapshotTimer) return
-    snapshotTimer = setInterval(() => {
-      playerStore.refreshSnapshot()
-    }, snapshotSyncIntervalMs)
-  }
-
-  const stopSnapshotPolling = () => {
-    if (!snapshotTimer) return
-    clearInterval(snapshotTimer)
-    snapshotTimer = null
-  }
+  watchEffect(() => {
+    const status = String(titleActivity.value || '').trim()
+    document.title = status ? `${appTitle}｜${status}` : appTitle
+  })
 
   const loadActivePlayers = async ({ silent = true } = {}) => {
     if (!sessionStore.isAuthenticated) {
@@ -361,7 +462,7 @@
     () => sessionStore.isAuthenticated,
     authed => {
       if (!authed) {
-        stopSnapshotPolling()
+        gameRealtimeStore.disconnect()
         stopActiveUsersPolling()
         activePlayers.value = 0
         menuOptions.value = []
@@ -375,7 +476,7 @@
       if (route.path === '/') {
         router.replace('/cultivation')
       }
-      startSnapshotPolling()
+      gameRealtimeStore.connect()
       startActiveUsersPolling()
       loadActivePlayers({ silent: true })
     },
@@ -389,7 +490,7 @@
 
   onUnmounted(() => {
     window.removeEventListener('resize', syncViewportMode)
-    stopSnapshotPolling()
+    gameRealtimeStore.disconnect()
     stopActiveUsersPolling()
   })
 </script>

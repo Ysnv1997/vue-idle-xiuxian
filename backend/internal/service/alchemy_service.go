@@ -82,6 +82,22 @@ func (s *AlchemyService) Craft(ctx context.Context, userID uuid.UUID, recipeID s
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := ensureNoActiveDungeonRunTx(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := ensureHuntingRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopHuntingForConflictTx(ctx, tx, userID, "进行炼丹，刷怪已自动结束"); err != nil {
+		return nil, err
+	}
+	if err := ensureMeditationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopMeditationForConflictTx(ctx, tx, userID, "进行炼丹，打坐已自动结束"); err != nil {
+		return nil, err
+	}
+
 	if err := ensureAlchemyRows(ctx, tx, userID); err != nil {
 		return nil, err
 	}

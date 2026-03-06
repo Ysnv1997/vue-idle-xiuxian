@@ -1,7 +1,5 @@
 import { defineStore } from 'pinia'
 import {
-  acceptAuctionBidOrder,
-  bidAuctionOrder,
   buyAuctionOrder,
   cancelAuctionOrder,
   createAuctionOrder,
@@ -16,14 +14,29 @@ export const useAuctionStore = defineStore('auction', {
     myOrders: [],
     loading: false,
     submitting: false,
-    lastError: ''
+    lastError: '',
+    filters: {
+      category: '',
+      subCategory: ''
+    }
   }),
   actions: {
-    async loadOpenOrders(limit = 20) {
+    async loadOpenOrders(limit = 20, filters = null) {
       this.loading = true
       this.lastError = ''
       try {
-        const result = await fetchAuctionList(limit, 0)
+        if (filters && typeof filters === 'object') {
+          this.filters = {
+            category: filters.category || '',
+            subCategory: filters.subCategory || ''
+          }
+        }
+        const result = await fetchAuctionList({
+          limit,
+          offset: 0,
+          category: this.filters.category,
+          subCategory: this.filters.subCategory
+        })
         this.openOrders = Array.isArray(result?.orders) ? result.orders : []
         return this.openOrders
       } catch (error) {
@@ -47,8 +60,8 @@ export const useAuctionStore = defineStore('auction', {
         this.loading = false
       }
     },
-    async refresh(limit = 20) {
-      await Promise.all([this.loadOpenOrders(limit), this.loadMyOrders(limit)])
+    async refresh(limit = 20, filters = null) {
+      await Promise.all([this.loadOpenOrders(limit, filters), this.loadMyOrders(limit)])
     },
     async createOrder(payload) {
       this.submitting = true
@@ -94,35 +107,6 @@ export const useAuctionStore = defineStore('auction', {
         return result
       } catch (error) {
         this.lastError = error?.message || '购买失败'
-        throw error
-      } finally {
-        this.submitting = false
-      }
-    },
-    async bidOrder(orderId, amount) {
-      this.submitting = true
-      this.lastError = ''
-      try {
-        const result = await bidAuctionOrder(orderId, amount)
-        await this.refresh()
-        return result
-      } catch (error) {
-        this.lastError = error?.message || '出价失败'
-        throw error
-      } finally {
-        this.submitting = false
-      }
-    },
-    async acceptBidOrder(orderId) {
-      this.submitting = true
-      this.lastError = ''
-      try {
-        const result = await acceptAuctionBidOrder(orderId)
-        this.applySnapshot(result?.snapshot)
-        await this.refresh()
-        return result
-      } catch (error) {
-        this.lastError = error?.message || '接受出价失败'
         throw error
       } finally {
         this.submitting = false

@@ -25,12 +25,6 @@ func PassiveProgress(progressService *service.PassiveProgressService) gin.Handle
 		// 活跃心跳仅用于统计展示，失败不应阻塞主流程。
 		_ = progressService.TouchActivity(c.Request.Context(), userID)
 
-		if err := progressService.Advance(c.Request.Context(), userID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "sync passive progress failed"})
-			c.Abort()
-			return
-		}
-
 		c.Next()
 	}
 }

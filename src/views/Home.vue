@@ -15,7 +15,12 @@
           <p>开始你的修仙之旅吧！</p>
         </n-space>
         <n-space justify="center" v-if="showLoginButton">
-          <n-button type="primary" @click="sessionStore.redirectToLinuxDoLogin">使用 Linux.do 登录</n-button>
+          <n-button type="primary" class="linuxdo-login-btn" @click="sessionStore.redirectToLinuxDoLogin">
+            <template #icon>
+              <img :src="linuxDoIcon" alt="LinuxDO" class="linuxdo-icon" />
+            </template>
+            使用 LinuxDO 继续
+          </n-button>
         </n-space>
         <n-space justify="center" v-if="showLoginStatus">
           <n-tag type="success">已登录：{{ sessionStore.user?.username || '道友' }}</n-tag>
@@ -31,6 +36,7 @@
   import { useSessionStore } from '../stores/session'
   import { useMessage } from 'naive-ui'
   import { useRouter } from 'vue-router'
+  import linuxDoIcon from '../assets/icons/linuxdo-icon.png'
   const router = useRouter()
   const sessionStore = useSessionStore()
   const message = useMessage()
@@ -61,6 +67,18 @@
   .home-content p {
     color: var(--ink-sub);
     font-size: 15px;
+  }
+
+  .linuxdo-login-btn {
+    min-width: 220px;
+    font-weight: 600;
+  }
+
+  .linuxdo-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: block;
   }
 
   @media (max-width: 768px) {
