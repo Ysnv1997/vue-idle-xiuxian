@@ -12,6 +12,40 @@ export async function cultivateUntilBreakthrough() {
   })
 }
 
+export async function listHuntingMaps() {
+  return httpRequest('/game/hunting/maps')
+}
+
+export async function getHuntingStatus() {
+  return httpRequest('/game/hunting/status')
+}
+
+export async function startHuntingRun(mapId) {
+  return httpRequest('/game/hunting/start', {
+    method: 'POST',
+    body: { mapId }
+  })
+}
+
+export async function tickHuntingRun() {
+  return httpRequest('/game/hunting/tick', {
+    method: 'POST'
+  })
+}
+
+export async function stopHuntingRun() {
+  return httpRequest('/game/hunting/stop', {
+    method: 'POST'
+  })
+}
+
+export async function huntMonster(mapId) {
+  return httpRequest('/game/hunting/fight', {
+    method: 'POST',
+    body: { mapId }
+  })
+}
+
 export async function breakthrough() {
   return httpRequest('/game/breakthrough', {
     method: 'POST'

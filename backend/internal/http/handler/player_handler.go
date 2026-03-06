@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -74,6 +75,26 @@ func (h *PlayerHandler) Snapshot(c *gin.Context) {
 		"activePetId":             snapshot.ActivePetID,
 		"activeEffects":           decodeJSONArray(snapshot.ActiveEffects),
 		"equippedArtifacts":       decodeJSON(snapshot.EquippedArtifacts),
+	})
+}
+
+func (h *PlayerHandler) ActiveCount(c *gin.Context) {
+	_, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	const activeWithin = 12 * time.Hour
+	count, err := h.userRepo.CountActivePlayers(c.Request.Context(), activeWithin)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query active players failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"activeUsers": count,
+		"windowHours": int(activeWithin / time.Hour),
 	})
 }
 

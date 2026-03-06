@@ -25,6 +25,8 @@ type Config struct {
 	OAuthStateTTL    time.Duration
 	AuctionSweepTTL  time.Duration
 	AuctionSweepMax  int
+	HuntingSweepTTL  time.Duration
+	HuntingSweepMax  int
 	ChatCleanupTTL   time.Duration
 	ChatRetentionTTL time.Duration
 	ChatRetentionMax int
@@ -103,6 +105,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	huntingSweepTTL, err := parseDurationSeconds("HUNTING_SWEEP_INTERVAL_SECONDS", 1)
+	if err != nil {
+		return Config{}, err
+	}
+	huntingSweepMax, err := parsePositiveInt("HUNTING_SWEEP_BATCH_SIZE", 200)
+	if err != nil {
+		return Config{}, err
+	}
 	chatCleanupTTL, err := parseDurationSeconds("CHAT_CLEANUP_INTERVAL_SECONDS", 30)
 	if err != nil {
 		return Config{}, err
@@ -121,6 +131,8 @@ func Load() (Config, error) {
 	cfg.OAuthStateTTL = oauthStateTTL
 	cfg.AuctionSweepTTL = auctionSweepTTL
 	cfg.AuctionSweepMax = auctionSweepMax
+	cfg.HuntingSweepTTL = huntingSweepTTL
+	cfg.HuntingSweepMax = huntingSweepMax
 	cfg.ChatCleanupTTL = chatCleanupTTL
 	cfg.ChatRetentionTTL = chatRetentionTTL
 	cfg.ChatRetentionMax = chatRetentionMax

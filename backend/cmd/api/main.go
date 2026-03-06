@@ -39,6 +39,7 @@ func main() {
 	userRepo := repository.NewUserRepository(pool)
 	tokenService := service.NewTokenService(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	authService := service.NewAuthService(userRepo, tokenService)
+	passiveProgressService := service.NewPassiveProgressService(pool)
 	gameService := service.NewGameService(pool, userRepo)
 	explorationService := service.NewExplorationService(pool, userRepo)
 	alchemyService := service.NewAlchemyService(pool, userRepo)
@@ -62,6 +63,7 @@ func main() {
 		},
 	)
 	startAuctionSweepWorker(ctx, auctionService, cfg.AuctionSweepTTL, cfg.AuctionSweepMax)
+	startHuntingSweepWorker(ctx, passiveProgressService, cfg.HuntingSweepTTL, cfg.HuntingSweepMax)
 	startChatCleanupWorker(ctx, chatService, cfg.ChatCleanupTTL, cfg.ChatRetentionTTL, cfg.ChatRetentionMax)
 
 	authHandler := handler.NewAuthHandler(cfg, authService, userRepo)
@@ -82,14 +84,15 @@ func main() {
 	)
 
 	engine := httprouter.New(httprouter.Dependencies{
-		TokenService:    tokenService,
-		AuthHandler:     authHandler,
-		PlayerHandler:   playerHandler,
-		GameHandler:     gameHandler,
-		RankingHandler:  rankingHandler,
-		AuctionHandler:  auctionHandler,
-		ChatHandler:     chatHandler,
-		RechargeHandler: rechargeHandler,
+		TokenService:           tokenService,
+		PassiveProgressService: passiveProgressService,
+		AuthHandler:            authHandler,
+		PlayerHandler:          playerHandler,
+		GameHandler:            gameHandler,
+		RankingHandler:         rankingHandler,
+		AuctionHandler:         auctionHandler,
+		ChatHandler:            chatHandler,
+		RechargeHandler:        rechargeHandler,
 	})
 
 	httpServer := &http.Server{
@@ -132,6 +135,55 @@ func startAuctionSweepWorker(ctx context.Context, auctionService *service.Auctio
 		}
 		if result != nil && result.ProcessedOrders > 0 {
 			log.Printf("auction sweep processed %d expired orders", result.ProcessedOrders)
+		}
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		runSweep()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runSweep()
+			}
+		}
+	}()
+}
+
+func startHuntingSweepWorker(
+	ctx context.Context,
+	passiveProgressService *service.PassiveProgressService,
+	interval time.Duration,
+	batchSize int,
+) {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	if batchSize <= 0 {
+		batchSize = 200
+	}
+
+	runSweep := func() {
+		if ctx.Err() != nil {
+			return
+		}
+		runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		processed, err := passiveProgressService.AdvanceActiveRuns(runCtx, batchSize)
+		if err != nil {
+			if runCtx.Err() != nil || ctx.Err() != nil {
+				return
+			}
+			log.Printf("hunting sweep failed: %v", err)
+			return
+		}
+		if processed >= batchSize {
+			log.Printf("hunting sweep reached batch limit: %d", processed)
 		}
 	}
 

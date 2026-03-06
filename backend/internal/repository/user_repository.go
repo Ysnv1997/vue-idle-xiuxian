@@ -233,7 +233,7 @@ func (r *UserRepository) GetSnapshot(ctx context.Context, userID uuid.UUID) (*Pl
 			pp.realm,
 			pp.cultivation,
 			pp.max_cultivation,
-			pr.spirit + (GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0) * pr.spirit_rate),
+				pr.spirit + (LEAST(GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0), 43200) * pr.spirit_rate),
 			pr.spirit_rate,
 			pr.luck,
 			pr.cultivation_rate,
@@ -403,4 +403,47 @@ func (r *UserRepository) InsertEconomyLog(ctx context.Context, userID uuid.UUID,
 		return fmt.Errorf("insert economy log: %w", err)
 	}
 	return nil
+}
+
+func (r *UserRepository) TouchActivity(ctx context.Context, userID uuid.UUID) error {
+	const query = `
+		INSERT INTO player_activity (user_id, last_seen_at, updated_at)
+		VALUES ($1, now(), now())
+		ON CONFLICT (user_id)
+		DO UPDATE SET
+			last_seen_at = EXCLUDED.last_seen_at,
+			updated_at = now()
+	`
+	if _, err := r.pool.Exec(ctx, query, userID); err != nil {
+		return fmt.Errorf("touch player activity: %w", err)
+	}
+	return nil
+}
+
+func (r *UserRepository) CountActivePlayers(ctx context.Context, activeWithin time.Duration) (int64, error) {
+	seconds := int64(activeWithin / time.Second)
+	if seconds <= 0 {
+		seconds = 12 * 60 * 60
+	}
+
+	const query = `
+		SELECT COUNT(*)::BIGINT
+		FROM users u
+		LEFT JOIN player_activity pa ON pa.user_id = u.id
+		LEFT JOIN player_hunting_runs phr ON phr.user_id = u.id
+		WHERE GREATEST(
+			COALESCE(pa.last_seen_at, to_timestamp(0)),
+			COALESCE(u.last_login_at, to_timestamp(0)),
+			CASE
+				WHEN COALESCE(phr.is_active, FALSE) THEN COALESCE(phr.updated_at, to_timestamp(0))
+				ELSE to_timestamp(0)
+			END
+		) >= now() - ($1 * INTERVAL '1 second')
+	`
+
+	var count int64
+	if err := r.pool.QueryRow(ctx, query, seconds).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active players: %w", err)
+	}
+	return count, nil
 }

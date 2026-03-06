@@ -166,8 +166,8 @@ CREATE TABLE IF NOT EXISTS recharge_callbacks (
 
 INSERT INTO recharge_products (code, credit_amount, spirit_stones, bonus_rate, enabled)
 VALUES
-  ('starter_6', 6, 60, 0, TRUE),
-  ('growth_30', 30, 330, 0.1, TRUE),
-  ('ascend_68', 68, 816, 0.2, TRUE),
-  ('immortal_128', 128, 1664, 0.3, TRUE)
+  ('starter_6', 6, 600, 0, TRUE),
+  ('growth_30', 30, 3300, 0.1, TRUE),
+  ('ascend_68', 68, 8160, 0.2, TRUE),
+  ('immortal_128', 128, 16640, 0.3, TRUE)
 ON CONFLICT (code) DO NOTHING;

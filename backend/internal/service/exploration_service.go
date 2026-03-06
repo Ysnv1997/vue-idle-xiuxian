@@ -192,7 +192,7 @@ func loadExplorationState(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*ex
 			pp.realm,
 			pp.cultivation,
 			pp.max_cultivation,
-			pr.spirit + (GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0) * pr.spirit_rate),
+				pr.spirit + (LEAST(GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0), 43200) * pr.spirit_rate),
 			pr.spirit_rate,
 			pr.herb_rate,
 			pr.luck,

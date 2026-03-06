@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -35,6 +36,37 @@ type CultivationActionResult struct {
 	Snapshot        *repository.PlayerSnapshot `json:"snapshot"`
 }
 
+type HuntingMap struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	MinLevel          int      `json:"minLevel"`
+	RewardFactor      float64  `json:"rewardFactor"`
+	RecommendedPower  int64    `json:"recommendedPower"`
+	RecommendedHealth int64    `json:"recommendedHealth"`
+	EstimatedCost     int64    `json:"estimatedCost"`
+	EstimatedGain     int64    `json:"estimatedGain"`
+	Monsters          []string `json:"monsters"`
+	ProgressionNote   string   `json:"progressionNote"`
+	EstimatedPerHour  int64    `json:"estimatedPerHour"`
+}
+
+type HuntingMapListResult struct {
+	Maps []HuntingMap `json:"maps"`
+}
+
+type HuntingActionResult struct {
+	MapID           string                     `json:"mapId"`
+	MapName         string                     `json:"mapName"`
+	MonsterName     string                     `json:"monsterName"`
+	SpiritCost      int64                      `json:"spiritCost"`
+	CultivationGain int64                      `json:"cultivationGain"`
+	DoubleGain      bool                       `json:"doubleGain"`
+	DoubleGainTimes int                        `json:"doubleGainTimes"`
+	Breakthrough    bool                       `json:"breakthrough"`
+	Snapshot        *repository.PlayerSnapshot `json:"snapshot"`
+}
+
 type InsufficientSpiritError struct {
 	Required          float64
 	Current           float64
@@ -53,6 +85,29 @@ type BreakthroughUnavailableError struct {
 
 func (e *BreakthroughUnavailableError) Error() string {
 	return fmt.Sprintf("breakthrough unavailable: current %d, required %d", e.CurrentCultivation, e.RequiredCultivation)
+}
+
+type InvalidHuntingMapError struct {
+	MapID string
+}
+
+func (e *InvalidHuntingMapError) Error() string {
+	return fmt.Sprintf("invalid hunting map: %s", e.MapID)
+}
+
+type HuntingMapLockedError struct {
+	MapID         string
+	RequiredLevel int
+	CurrentLevel  int
+}
+
+func (e *HuntingMapLockedError) Error() string {
+	return fmt.Sprintf(
+		"hunting map locked: map %s requires level %d current level %d",
+		e.MapID,
+		e.RequiredLevel,
+		e.CurrentLevel,
+	)
 }
 
 func (s *GameService) CultivateOnce(ctx context.Context, userID uuid.UUID) (*CultivationActionResult, error) {
@@ -238,6 +293,129 @@ func (s *GameService) Breakthrough(ctx context.Context, userID uuid.UUID) (*Cult
 	}, nil
 }
 
+func (s *GameService) ListHuntingMaps(ctx context.Context, userID uuid.UUID) (*HuntingMapListResult, error) {
+	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot == nil {
+		return nil, fmt.Errorf("player snapshot not found")
+	}
+
+	baseCost := currentCultivationCost(snapshot.Level)
+	baseGain := currentCultivationGain(snapshot.Level)
+	maps := make([]HuntingMap, 0, len(huntingMapCatalog))
+	for _, cfg := range huntingMapCatalog {
+		estimatedCost := applyHuntingFactor(baseCost, cfg.RewardFactor)
+		estimatedGain := int64(math.Ceil(float64(alignCultivationGainByCost(baseCost, baseGain, estimatedCost)) * huntingWinGainMultiplier))
+		if estimatedGain <= 0 {
+			estimatedGain = 1
+		}
+		estimatedPerHour := estimateCultivationPerHour(estimatedCost, estimatedGain, snapshot.SpiritRate)
+		recommendedPower, recommendedHealth := estimateHuntingMapEntryRequirements(snapshot.Level, cfg)
+		maps = append(maps, HuntingMap{
+			ID:                cfg.ID,
+			Name:              cfg.Name,
+			Description:       cfg.Description,
+			MinLevel:          cfg.MinLevel,
+			RewardFactor:      cfg.RewardFactor,
+			RecommendedPower:  recommendedPower,
+			RecommendedHealth: recommendedHealth,
+			EstimatedCost:     estimatedCost,
+			EstimatedGain:     estimatedGain,
+			Monsters:          cloneStringSlice(cfg.Monsters),
+			ProgressionNote:   "日常刷图升级效率约为打坐的2倍，建议按等级选择地图长期挂机。",
+			EstimatedPerHour:  estimatedPerHour,
+		})
+	}
+
+	return &HuntingMapListResult{Maps: maps}, nil
+}
+
+func (s *GameService) HuntOnce(ctx context.Context, userID uuid.UUID, mapID string) (*HuntingActionResult, error) {
+	mapID = strings.TrimSpace(mapID)
+	if mapID == "" {
+		return nil, &InvalidHuntingMapError{MapID: mapID}
+	}
+	targetMap, ok := findHuntingMapByID(mapID)
+	if !ok {
+		return nil, &InvalidHuntingMapError{MapID: mapID}
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin hunting transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	state, err := loadCultivationState(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if state.Level < targetMap.MinLevel {
+		return nil, &HuntingMapLockedError{
+			MapID:         targetMap.ID,
+			RequiredLevel: targetMap.MinLevel,
+			CurrentLevel:  state.Level,
+		}
+	}
+
+	baseCost := currentCultivationCost(state.Level)
+	baseGain := currentCultivationGain(state.Level)
+
+	spiritCost := applyHuntingFactor(baseCost, targetMap.RewardFactor)
+	if state.Spirit < float64(spiritCost) {
+		return nil, &InsufficientSpiritError{
+			Required:          float64(spiritCost),
+			Current:           state.Spirit,
+			RegenRate:         state.SpiritRate,
+			RetryAfterSeconds: estimateSpiritRetryAfterSeconds(float64(spiritCost), state.Spirit, state.SpiritRate),
+		}
+	}
+
+	gain := int64(math.Ceil(float64(alignCultivationGainByCost(baseCost, baseGain, spiritCost)) * huntingWinGainMultiplier))
+	if gain <= 0 {
+		gain = 1
+	}
+	doubleGain := shouldDoubleGain(state.Luck)
+	if doubleGain {
+		gain *= 2
+	}
+	gain = applyCultivationRate(gain, state.CultivationRate)
+
+	state.Spirit -= float64(spiritCost)
+	state.Cultivation += gain
+
+	breakthrough := false
+	if state.Cultivation >= state.MaxCultivation {
+		breakthrough = applyBreakthrough(state)
+	}
+
+	if err := persistCultivationState(ctx, tx, userID, state, 1, breakthrough); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit hunting transaction: %w", err)
+	}
+
+	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &HuntingActionResult{
+		MapID:           targetMap.ID,
+		MapName:         targetMap.Name,
+		MonsterName:     randomHuntingMonster(targetMap.Monsters),
+		SpiritCost:      spiritCost,
+		CultivationGain: gain,
+		DoubleGain:      doubleGain,
+		DoubleGainTimes: boolToInt(doubleGain),
+		Breakthrough:    breakthrough,
+		Snapshot:        snapshot,
+	}, nil
+}
+
 type cultivationState struct {
 	Level           int
 	Realm           string
@@ -256,7 +434,7 @@ func loadCultivationState(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*cu
 			pp.realm,
 			pp.cultivation,
 			pp.max_cultivation,
-			pr.spirit + (GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0) * pr.spirit_rate),
+				pr.spirit + (LEAST(GREATEST(EXTRACT(EPOCH FROM now() - pr.updated_at), 0), 43200) * pr.spirit_rate),
 			pr.spirit_rate,
 			pr.luck,
 			pr.cultivation_rate
@@ -280,6 +458,44 @@ func loadCultivationState(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (*cu
 		return nil, fmt.Errorf("load cultivation state: %w", err)
 	}
 	return state, nil
+}
+
+func estimateHuntingMapEntryRequirements(playerLevel int, cfg huntingMapConfig) (int64, int64) {
+	referenceLevel := maxInt(playerLevel, cfg.MinLevel)
+	effectiveKillCount := huntingDifficultyKillCount(cfg, 0)
+	progressScale := 1 + math.Min(80, float64(effectiveKillCount))*0.015
+	levelScale := 1 + float64(maxInt(0, referenceLevel-1))*0.06
+	mapScale := 0.9 + cfg.RewardFactor*0.25
+	scale := progressScale * levelScale * mapScale
+
+	// 敌方强度按初始遭遇概率做加权：普通 88%，精英 10%，首领 2%。
+	const (
+		avgHealthMult  = 1.069
+		avgDamageMult  = 1.051
+		avgDefenseMult = 1.032
+		avgSpeedMult   = 1.015
+	)
+
+	enemyHealth := (40 + float64(referenceLevel)*15) * scale * avgHealthMult
+	enemyDamage := (5 + float64(referenceLevel)*1.4) * scale * avgDamageMult
+	enemyDefense := (2 + float64(referenceLevel)*0.8) * scale * avgDefenseMult
+	enemySpeed := (6 + float64(referenceLevel)*0.9) * scale * avgSpeedMult
+
+	enemyPower := enemyDamage*2 + enemyDefense*1.5 + enemyHealth*0.2 + enemySpeed + float64(referenceLevel)*10
+	recommendedPower := int64(math.Ceil(enemyPower * 1.15))
+	if recommendedPower < 60 {
+		recommendedPower = 60
+	}
+
+	recommendedHealth := int64(math.Ceil(enemyDamage * 11.5))
+	minHealthByEnemyHP := int64(math.Ceil(enemyHealth * 0.25))
+	if recommendedHealth < minHealthByEnemyHP {
+		recommendedHealth = minHealthByEnemyHP
+	}
+	if recommendedHealth < 100 {
+		recommendedHealth = 100
+	}
+	return recommendedPower, recommendedHealth
 }
 
 func persistCultivationState(ctx context.Context, tx pgx.Tx, userID uuid.UUID, state *cultivationState, cultivationTimes int64, breakthrough bool) error {
@@ -383,6 +599,65 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func applyHuntingFactor(base int64, factor float64) int64 {
+	if factor <= 0 {
+		factor = 1
+	}
+	value := int64(math.Floor(float64(base) * factor))
+	if value <= 0 {
+		return 1
+	}
+	return value
+}
+
+func alignCultivationGainByCost(baseCost int64, baseGain int64, targetCost int64) int64 {
+	if baseCost <= 0 || baseGain <= 0 || targetCost <= 0 {
+		return 1
+	}
+	gain := int64(math.Round(float64(targetCost) * (float64(baseGain) / float64(baseCost))))
+	if gain <= 0 {
+		return 1
+	}
+	return gain
+}
+
+func randomHuntingMonster(monsters []string) string {
+	if len(monsters) == 0 {
+		return "妖兽"
+	}
+	return monsters[rand.Intn(len(monsters))]
+}
+
+func estimateCultivationPerHour(cost int64, gain int64, spiritRate float64) int64 {
+	if cost <= 0 || gain <= 0 {
+		return 0
+	}
+	if spiritRate <= 0 {
+		return 0
+	}
+	actionsPerSecond := spiritRate / float64(cost)
+	if actionsPerSecond > 1 {
+		actionsPerSecond = 1
+	}
+	if actionsPerSecond < 0 {
+		actionsPerSecond = 0
+	}
+	perHour := int64(math.Floor(actionsPerSecond * float64(gain) * 3600))
+	if perHour < 0 {
+		return 0
+	}
+	return perHour
+}
+
+func cloneStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	out := make([]string, len(values))
+	copy(out, values)
+	return out
 }
 
 func estimateSpiritRetryAfterSeconds(required float64, current float64, spiritRate float64) int64 {

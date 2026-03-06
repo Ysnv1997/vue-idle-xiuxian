@@ -10,6 +10,7 @@
                   <div class="brand-area">
                     <p class="brand-eyebrow">修真总览</p>
                     <h1 class="brand-title">修仙大世界</h1>
+                    <p class="brand-presence">当前活跃修士：{{ formatNumber(activePlayers) }} 人（近 {{ activeWindowHours }} 小时）</p>
                   </div>
 
                   <div class="header-right">
@@ -155,6 +156,7 @@
 
   import GlobalChatDock from './components/GlobalChatDock.vue'
   import { getRealmName } from './plugins/realm'
+  import { fetchActivePlayerCount } from './api/modules/player'
   import { usePlayerStore } from './stores/player'
   import { useSessionStore } from './stores/session'
 
@@ -169,7 +171,11 @@
   const isCompact = ref(false)
 
   const snapshotSyncIntervalMs = 3000
+  const activeUsersSyncIntervalMs = 300000
   let snapshotTimer = null
+  let activeUsersTimer = null
+  const activePlayers = ref(0)
+  const activeWindowHours = ref(12)
 
   const currentRealmName = computed(() => getRealmName(playerStore.level).name)
   const playerInitial = computed(() => {
@@ -280,6 +286,35 @@
     snapshotTimer = null
   }
 
+  const loadActivePlayers = async ({ silent = true } = {}) => {
+    if (!sessionStore.isAuthenticated) {
+      activePlayers.value = 0
+      return
+    }
+    try {
+      const result = await fetchActivePlayerCount()
+      activePlayers.value = Number(result?.activeUsers || 0)
+      activeWindowHours.value = Number(result?.windowHours || 12)
+    } catch (error) {
+      if (!silent) {
+        console.error('加载活跃人数失败:', error)
+      }
+    }
+  }
+
+  const startActiveUsersPolling = () => {
+    if (activeUsersTimer) return
+    activeUsersTimer = setInterval(() => {
+      loadActivePlayers({ silent: true })
+    }, activeUsersSyncIntervalMs)
+  }
+
+  const stopActiveUsersPolling = () => {
+    if (!activeUsersTimer) return
+    clearInterval(activeUsersTimer)
+    activeUsersTimer = null
+  }
+
   const syncViewportMode = () => {
     isCompact.value = window.innerWidth < 1080
   }
@@ -294,6 +329,7 @@
     if (sessionStore.isAuthenticated) {
       try {
         await playerStore.initializePlayer()
+        await loadActivePlayers({ silent: false })
       } finally {
         isNewPlayer.value = playerStore.isNewPlayer
         getMenuOptions()
@@ -301,6 +337,7 @@
     } else {
       menuOptions.value = []
       isNewPlayer.value = true
+      activePlayers.value = 0
     }
 
     isLoading.value = false
@@ -325,6 +362,8 @@
     authed => {
       if (!authed) {
         stopSnapshotPolling()
+        stopActiveUsersPolling()
+        activePlayers.value = 0
         menuOptions.value = []
         if (route.path !== '/' && route.path !== '/auth/callback') {
           router.replace('/')
@@ -337,6 +376,8 @@
         router.replace('/cultivation')
       }
       startSnapshotPolling()
+      startActiveUsersPolling()
+      loadActivePlayers({ silent: true })
     },
     { immediate: true }
   )
@@ -349,6 +390,7 @@
   onUnmounted(() => {
     window.removeEventListener('resize', syncViewportMode)
     stopSnapshotPolling()
+    stopActiveUsersPolling()
   })
 </script>
 
@@ -460,6 +502,12 @@
     letter-spacing: 0.06em;
     color: var(--ink-main);
     line-height: 1.1;
+  }
+
+  .brand-presence {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ink-sub);
   }
 
   .header-right {

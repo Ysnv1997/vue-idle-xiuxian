@@ -108,3 +108,6 @@ All endpoints are served under the `/api/v1` prefix.
   - `AUCTION_SWEEP_INTERVAL_SECONDS`
   - `AUCTION_SWEEP_BATCH_SIZE`
 - Auction seller can accept current highest bid to settle the order via `POST /api/v1/auction/accept-bid`.
+- Hunting runs are advanced by backend worker (in addition to request-triggered sync):
+  - `HUNTING_SWEEP_INTERVAL_SECONDS`
+  - `HUNTING_SWEEP_BATCH_SIZE`

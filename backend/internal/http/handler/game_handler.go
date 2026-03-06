@@ -94,6 +94,116 @@ func (h *GameHandler) Breakthrough(c *gin.Context) {
 	h.respondWithAchievementSync(c, userID, result)
 }
 
+func (h *GameHandler) HuntingMaps(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.gameService.ListHuntingMaps(c.Request.Context(), userID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *GameHandler) HuntingStatus(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.gameService.HuntingStatus(c.Request.Context(), userID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+type huntingStartRequest struct {
+	MapID string `json:"mapId"`
+}
+
+func (h *GameHandler) HuntingStart(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req huntingStartRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.MapID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mapId is required"})
+		return
+	}
+
+	result, err := h.gameService.HuntingStart(c.Request.Context(), userID, req.MapID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+	h.respondWithAchievementSync(c, userID, result)
+}
+
+func (h *GameHandler) HuntingTick(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.gameService.HuntingTick(c.Request.Context(), userID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+	h.respondWithAchievementSync(c, userID, result)
+}
+
+func (h *GameHandler) HuntingStop(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.gameService.HuntingStop(c.Request.Context(), userID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+	h.respondWithAchievementSync(c, userID, result)
+}
+
+type huntingFightRequest struct {
+	MapID string `json:"mapId"`
+}
+
+func (h *GameHandler) HuntingFight(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req huntingFightRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.MapID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mapId is required"})
+		return
+	}
+
+	result, err := h.gameService.HuntOnce(c.Request.Context(), userID, req.MapID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+	h.respondWithAchievementSync(c, userID, result)
+}
+
 type explorationStartRequest struct {
 	LocationID string `json:"locationId"`
 }
@@ -605,6 +715,34 @@ func (h *GameHandler) handleGameError(c *gin.Context, err error) {
 			"error":               "breakthrough unavailable",
 			"requiredCultivation": breakthroughUnavailableError.RequiredCultivation,
 			"currentCultivation":  breakthroughUnavailableError.CurrentCultivation,
+		})
+		return
+	}
+
+	var invalidHuntingMapError *service.InvalidHuntingMapError
+	if errors.As(err, &invalidHuntingMapError) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid hunting map",
+			"mapId": invalidHuntingMapError.MapID,
+		})
+		return
+	}
+
+	var huntingMapLockedError *service.HuntingMapLockedError
+	if errors.As(err, &huntingMapLockedError) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":         "hunting map locked",
+			"mapId":         huntingMapLockedError.MapID,
+			"requiredLevel": huntingMapLockedError.RequiredLevel,
+			"currentLevel":  huntingMapLockedError.CurrentLevel,
+		})
+		return
+	}
+
+	var huntingRunNotActiveError *service.HuntingRunNotActiveError
+	if errors.As(err, &huntingRunNotActiveError) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "hunting run not active",
 		})
 		return
 	}

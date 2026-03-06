@@ -11,14 +11,15 @@ import (
 )
 
 type Dependencies struct {
-	TokenService    *service.TokenService
-	AuthHandler     *handler.AuthHandler
-	PlayerHandler   *handler.PlayerHandler
-	GameHandler     *handler.GameHandler
-	RankingHandler  *handler.RankingHandler
-	AuctionHandler  *handler.AuctionHandler
-	ChatHandler     *handler.ChatHandler
-	RechargeHandler *handler.RechargeHandler
+	TokenService           *service.TokenService
+	PassiveProgressService *service.PassiveProgressService
+	AuthHandler            *handler.AuthHandler
+	PlayerHandler          *handler.PlayerHandler
+	GameHandler            *handler.GameHandler
+	RankingHandler         *handler.RankingHandler
+	AuctionHandler         *handler.AuctionHandler
+	ChatHandler            *handler.ChatHandler
+	RechargeHandler        *handler.RechargeHandler
 }
 
 func New(deps Dependencies) *gin.Engine {
@@ -45,10 +46,11 @@ func New(deps Dependencies) *gin.Engine {
 	api.POST("/recharge/callback/credit-linux-do", deps.RechargeHandler.CreditLinuxDoCallback)
 
 	authed := api.Group("/")
-	authed.Use(middleware.Auth(deps.TokenService))
+	authed.Use(middleware.Auth(deps.TokenService), middleware.PassiveProgress(deps.PassiveProgressService))
 	{
 		authed.GET("/auth/me", deps.AuthHandler.Me)
 		authed.GET("/player/snapshot", deps.PlayerHandler.Snapshot)
+		authed.GET("/player/active-count", deps.PlayerHandler.ActiveCount)
 		authed.GET("/rankings", deps.RankingHandler.Rankings)
 		authed.GET("/rankings/friends", deps.RankingHandler.RankingFriends)
 		authed.GET("/rankings/self", deps.RankingHandler.RankingSelf)
@@ -78,6 +80,12 @@ func New(deps Dependencies) *gin.Engine {
 		authed.POST("/recharge/orders/sync", deps.RechargeHandler.SyncOrder)
 		authed.POST("/game/cultivation/once", deps.GameHandler.CultivationOnce)
 		authed.POST("/game/cultivation/until-breakthrough", deps.GameHandler.CultivationUntilBreakthrough)
+		authed.GET("/game/hunting/maps", deps.GameHandler.HuntingMaps)
+		authed.GET("/game/hunting/status", deps.GameHandler.HuntingStatus)
+		authed.POST("/game/hunting/start", deps.GameHandler.HuntingStart)
+		authed.POST("/game/hunting/tick", deps.GameHandler.HuntingTick)
+		authed.POST("/game/hunting/stop", deps.GameHandler.HuntingStop)
+		authed.POST("/game/hunting/fight", deps.GameHandler.HuntingFight)
 		authed.POST("/game/breakthrough", deps.GameHandler.Breakthrough)
 		authed.POST("/game/exploration/start", deps.GameHandler.ExplorationStart)
 		authed.POST("/game/alchemy/craft", deps.GameHandler.AlchemyCraft)
