@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/kowming/vue-idle-xiuxian/backend/internal/http/middleware"
 	"github.com/kowming/vue-idle-xiuxian/backend/internal/repository"
@@ -106,6 +107,56 @@ func (h *PlayerHandler) ActiveCount(c *gin.Context) {
 	})
 }
 
+func (h *PlayerHandler) PublicProfile(c *gin.Context) {
+	_, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	targetUserID, err := uuid.Parse(c.Query("userId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	profile, err := h.userRepo.GetPublicProfile(c.Request.Context(), targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query player profile failed"})
+		return
+	}
+	if profile == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "player profile not found"})
+		return
+	}
+
+	items := decodeJSONArray(profile.Items)
+	activePet := map[string]any{}
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if decodeString(item["id"]) == profile.ActivePetID && decodeString(item["type"]) == "pet" {
+			activePet = item
+			break
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"userId":            profile.UserID,
+		"name":              profile.Name,
+		"level":             profile.Level,
+		"realm":             profile.Realm,
+		"baseAttributes":    decodeJSON(profile.BaseAttributes),
+		"combatAttributes":  decodeJSON(profile.CombatAttributes),
+		"combatResistance":  decodeJSON(profile.CombatResistance),
+		"specialAttributes": decodeJSON(profile.SpecialAttributes),
+		"equippedArtifacts": decodeJSON(profile.EquippedArtifacts),
+		"activePet":         activePet,
+	})
+}
+
 func decodeJSON(raw []byte) map[string]any {
 	if len(raw) == 0 {
 		return map[string]any{}
@@ -137,4 +188,14 @@ func decodeStringArray(raw []byte) []string {
 		return []string{}
 	}
 	return decoded
+}
+
+func decodeString(value any) string {
+	if value == nil {
+		return ""
+	}
+	if str, ok := value.(string); ok {
+		return str
+	}
+	return ""
 }

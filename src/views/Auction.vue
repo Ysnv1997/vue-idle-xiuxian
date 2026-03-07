@@ -22,7 +22,7 @@
                   :options="tradableItemOptions"
                   placeholder="选择要上架的商品"
                   filterable
-                  style="min-width: 320px"
+                  class="listing-select"
                   :disabled="auctionStore.submitting"
                   @update:value="handleSelectListingItem"
                 />
@@ -31,7 +31,7 @@
                   :min="1"
                   :step="10"
                   placeholder="价格(灵石)"
-                  style="width: 150px"
+                  class="listing-price"
                   :disabled="auctionStore.submitting"
                 />
                 <n-button type="primary" :loading="auctionStore.submitting" @click="createOrder">上架</n-button>
@@ -62,7 +62,8 @@
                 <n-button size="small" :loading="auctionStore.loading" @click="refresh">应用筛选</n-button>
               </n-space>
               <n-spin :show="auctionStore.loading || auctionStore.submitting">
-                <n-table striped size="small">
+                <div class="auction-table-wrap">
+                  <n-table striped size="small">
                   <thead>
                     <tr>
                       <th style="width: 70px">订单</th>
@@ -114,14 +115,16 @@
                       </td>
                     </tr>
                   </tbody>
-                </n-table>
+                  </n-table>
+                </div>
               </n-spin>
             </n-card>
           </n-grid-item>
 
           <n-grid-item :span="24">
             <n-card size="small" title="我的订单">
-              <n-table striped size="small">
+              <div class="auction-table-wrap">
+                <n-table striped size="small">
                 <thead>
                   <tr>
                     <th style="width: 70px">订单</th>
@@ -161,7 +164,8 @@
                     </td>
                   </tr>
                 </tbody>
-              </n-table>
+                </n-table>
+              </div>
             </n-card>
           </n-grid-item>
         </n-grid>
@@ -561,3 +565,23 @@
     refresh()
   })
 </script>
+
+<style scoped>
+  .auction-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  @media (max-width: 768px) {
+    .listing-select,
+    .listing-price,
+    :deep(.n-space > .n-button) {
+      width: 100% !important;
+    }
+
+    :deep(.n-base-selection),
+    :deep(.n-input-number) {
+      width: 100% !important;
+    }
+  }
+</style>

@@ -624,4 +624,24 @@
     min-width: 56px;
     text-align: right;
   }
+
+  @media (max-width: 768px) {
+    :deep(.n-grid) {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    :deep(.n-descriptions) {
+      --n-td-padding: 8px;
+    }
+
+    .exploration-progress-row {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .exploration-progress-percent {
+      min-width: 0;
+      text-align: left;
+    }
+  }
 </style>

@@ -20,7 +20,10 @@
         <div class="chat-lines" v-if="messages.length">
           <div v-for="item in messages" :key="item.id" class="chat-line">
             <div class="chat-line-main">
-              <span class="chat-line-content">{{ formatLine(item) }}</span>
+              <span class="chat-line-content">
+                <button class="chat-line-sender" @click="openProfile(item)">{{ formatSender(item) }}</button>
+                <span>说：{{ String(item?.content || '').trim() || '...' }}</span>
+              </span>
               <span class="chat-line-time">{{ formatTime(item.createdAt) }}</span>
             </div>
             <div class="chat-line-actions">
@@ -90,6 +93,8 @@
       </n-space>
     </template>
   </n-modal>
+
+  <player-profile-dialog v-model:show="showProfileDialog" :loading="profileLoading" :profile="selectedProfile" />
 </template>
 
 <script setup>
@@ -98,6 +103,8 @@
   import { useChatStore } from '../stores/chat'
   import { getAccessToken } from '../api/token-storage'
   import { useSessionStore } from '../stores/session'
+  import { fetchPublicPlayerProfile } from '../api/modules/player'
+  import PlayerProfileDialog from './PlayerProfileDialog.vue'
 
   const chatStore = useChatStore()
   const sessionStore = useSessionStore()
@@ -111,6 +118,9 @@
   const muteReason = ref('')
   const muteDurationMinutes = ref(5)
   const muteTarget = ref(null)
+  const showProfileDialog = ref(false)
+  const profileLoading = ref(false)
+  const selectedProfile = ref(null)
 
   const messages = computed(() => (Array.isArray(chatStore.messages) ? chatStore.messages : []))
   const canModerateChat = computed(() => Boolean(sessionStore.user?.canModerateChat))
@@ -134,10 +144,10 @@
     return date.toLocaleTimeString()
   }
 
-  const formatLine = item => {
+  const formatSender = item => {
     const sender = String(item?.senderName || '匿名修士').trim() || '匿名修士'
-    const content = String(item?.content || '').trim()
-    return `${sender}说：${content || '...'}`
+    const realm = String(item?.senderRealm || '').trim()
+    return realm ? `${sender} · ${realm}` : sender
   }
 
   const resolveSenderLinuxDoUserId = item => String(item?.senderLinuxDoUserId || '').trim()
@@ -215,6 +225,25 @@
         }
       }
     })
+  }
+
+  const openProfile = async item => {
+    const userId = String(item?.senderUserID || item?.senderUserId || '').trim()
+    if (!userId) {
+      message.warning('该玩家资料暂不可查看')
+      return
+    }
+    showProfileDialog.value = true
+    profileLoading.value = true
+    selectedProfile.value = null
+    try {
+      selectedProfile.value = await fetchPublicPlayerProfile(userId)
+    } catch (error) {
+      message.error(error?.message || '加载玩家资料失败')
+      showProfileDialog.value = false
+    } finally {
+      profileLoading.value = false
+    }
   }
 
   const openMuteDialog = item => {
@@ -382,6 +411,16 @@
     word-break: break-word;
   }
 
+  .chat-line-sender {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0 4px 0 0;
+    color: var(--accent-primary);
+    cursor: pointer;
+    font-weight: 700;
+  }
+
   .chat-line-time {
     flex-shrink: 0;
     color: var(--ink-sub);
@@ -455,6 +494,62 @@
     .chat-dock {
       bottom: 6px;
       width: calc(100vw - 12px);
+      border-radius: 12px;
+    }
+
+    .chat-dock:not(.collapsed) {
+      height: 46vh;
+      max-height: 340px;
+    }
+
+    .chat-head {
+      padding: 8px;
+    }
+
+    .chat-title-wrap {
+      font-size: 13px;
+    }
+
+    .chat-line {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
+    }
+
+    .chat-line-main {
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .chat-line-time {
+      align-self: flex-end;
+    }
+
+    .chat-line-actions {
+      justify-content: flex-end;
+    }
+
+    .chat-compose {
+      grid-template-columns: 1fr;
+    }
+
+    .chat-compose :deep(.n-button) {
+      width: 100%;
+    }
+
+    .chat-muted,
+    .chat-error {
+      white-space: normal;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .chat-body {
+      padding: 6px 8px 8px;
+    }
+
+    .chat-stream {
+      padding: 4px 6px;
     }
   }
 </style>

@@ -75,6 +75,7 @@
             preset="dialog"
             title="抽卡结果"
             :style="{ maxWidth: '90vw', width: '800px' }"
+            class="gacha-modal"
           >
             <n-card :bordered="false">
               <!-- 筛选区域 -->
@@ -153,7 +154,7 @@
             </n-card>
           </n-modal>
           <!-- 概率说明弹窗 -->
-          <n-modal v-model:show="showProbabilityInfo" preset="dialog" title="抽卡概率说明">
+          <n-modal v-model:show="showProbabilityInfo" preset="dialog" title="抽卡概率说明" class="gacha-modal">
             <n-tabs type="segment" animated>
               <!-- 综合池概率 -->
               <n-tab-pane name="all" tab="综合池">
@@ -305,7 +306,7 @@
             </n-tabs>
           </n-modal>
           <!-- 心愿单设置弹窗 -->
-          <n-modal v-model:show="showWishlistSettings" preset="dialog" title="心愿单设置" style="width: 800px">
+          <n-modal v-model:show="showWishlistSettings" preset="dialog" title="心愿单设置" style="width: 800px" class="gacha-modal">
             <n-card :bordered="false">
               <n-space vertical>
                 <n-switch v-model:value="playerStore.wishlistEnabled">
@@ -353,7 +354,7 @@
               </n-space>
             </n-card>
           </n-modal>
-          <n-modal v-model:show="showAutoSettings" preset="dialog" title="自动处理设置" style="width: 800px">
+          <n-modal v-model:show="showAutoSettings" preset="dialog" title="自动处理设置" style="width: 800px" class="gacha-modal">
             <n-card :bordered="false">
               <n-space vertical>
                 <n-divider>装备自动出售</n-divider>
@@ -882,8 +883,95 @@
   }
 
   @media screen and (max-width: 768px) {
+    .gacha-content {
+      overflow: hidden;
+    }
+
+    .gacha-type-selector,
+    .spirit-stones,
+    .gacha-buttons {
+      width: 100%;
+    }
+
+    .gacha-type-selector :deep(.n-radio-group) {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .gacha-type-selector :deep(.n-radio-button) {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .spirit-stones {
+      align-self: stretch;
+    }
+
+    .gacha-item-container {
+      width: 160px;
+      height: 160px;
+    }
+
+    .gacha-item {
+      font-size: 76px;
+    }
+
+    .gacha-buttons :deep(.n-space) {
+      width: 100%;
+    }
+
+    .gacha-buttons :deep(.n-button) {
+      width: 100%;
+    }
+
+    .filter-section {
+      padding: 10px;
+    }
+
+    .filter-section :deep(.n-base-selection) {
+      width: 100% !important;
+    }
+
     .result-grid {
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .prob-item {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+
+    .prob-label {
+      min-width: 0;
+      text-align: left;
+    }
+
+    .gacha-modal {
+      width: calc(100vw - 16px) !important;
+      max-width: calc(100vw - 16px) !important;
+    }
+
+    .gacha-modal :deep(.n-card) {
+      width: 100%;
+    }
+  }
+
+  @media screen and (max-width: 480px) {
+    .gacha-type-selector :deep(.n-radio-group) {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .gacha-item-container {
+      width: 140px;
+      height: 140px;
+    }
+
+    .gacha-item {
+      font-size: 64px;
     }
   }
   .wishlist-button {

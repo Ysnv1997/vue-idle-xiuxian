@@ -77,6 +77,49 @@ func (r *UserRepository) FindByID(ctx context.Context, userID uuid.UUID) (*User,
 	return &user, nil
 }
 
+func (r *UserRepository) GetPublicProfile(ctx context.Context, userID uuid.UUID) (*PublicPlayerProfile, error) {
+	const query = `
+		SELECT
+			pp.user_id,
+			COALESCE(pp.player_name, '未知修士'),
+			COALESCE(pp.level, 1),
+			COALESCE(pp.realm, '练气一重'),
+			pa.base_attributes,
+			pa.combat_attributes,
+			pa.combat_resistance,
+			pa.special_attributes,
+			COALESCE(pis.equipped_artifacts, '{}'::jsonb),
+			COALESCE(pis.active_pet_id, ''),
+			COALESCE(pis.items, '[]'::jsonb)
+		FROM player_profiles pp
+		JOIN player_attributes pa ON pa.user_id = pp.user_id
+		JOIN player_inventory_state pis ON pis.user_id = pp.user_id
+		WHERE pp.user_id = $1
+	`
+
+	profile := &PublicPlayerProfile{}
+	err := r.pool.QueryRow(ctx, query, userID).Scan(
+		&profile.UserID,
+		&profile.Name,
+		&profile.Level,
+		&profile.Realm,
+		&profile.BaseAttributes,
+		&profile.CombatAttributes,
+		&profile.CombatResistance,
+		&profile.SpecialAttributes,
+		&profile.EquippedArtifacts,
+		&profile.ActivePetID,
+		&profile.Items,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get public player profile: %w", err)
+	}
+	return profile, nil
+}
+
 func (r *UserRepository) UpsertLinuxDoUser(ctx context.Context, linuxDoUserID, username, avatar string) (*User, error) {
 	const query = `
 		INSERT INTO users (linux_do_user_id, linux_do_username, linux_do_avatar, last_login_at)

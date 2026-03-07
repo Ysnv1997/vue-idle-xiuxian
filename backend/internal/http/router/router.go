@@ -54,6 +54,7 @@ func New(deps Dependencies) *gin.Engine {
 		authed.GET("/auth/me", deps.AuthHandler.Me)
 		authed.GET("/player/snapshot", deps.PlayerHandler.Snapshot)
 		authed.GET("/player/active-count", deps.PlayerHandler.ActiveCount)
+		authed.GET("/player/public-profile", deps.PlayerHandler.PublicProfile)
 		authed.GET("/rankings", deps.RankingHandler.Rankings)
 		authed.GET("/rankings/friends", deps.RankingHandler.RankingFriends)
 		authed.GET("/rankings/self", deps.RankingHandler.RankingSelf)

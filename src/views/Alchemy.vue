@@ -185,6 +185,10 @@
     width: 100%;
   }
 
+  :deep(.n-descriptions-table-content) {
+    word-break: break-word;
+  }
+
   .n-button {
     margin-bottom: 12px;
   }
@@ -237,5 +241,26 @@
 
   .fail-animation {
     animation: fail-shake 0.5s ease-in-out;
+  }
+
+  @media (max-width: 768px) {
+    :deep(.n-grid) {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    :deep(.n-list-item) {
+      padding-left: 0;
+      padding-right: 0;
+    }
+
+    :deep(.n-descriptions) {
+      --n-td-padding: 8px;
+    }
+
+    .craft-button {
+      position: sticky;
+      bottom: 8px;
+      z-index: 3;
+    }
   }
 </style>

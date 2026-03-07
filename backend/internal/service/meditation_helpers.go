@@ -23,7 +23,7 @@ func baseMeditationSpiritRegen(level int) float64 {
 	realmIndex := (level - 1) / 9
 	minorIndex := (level - 1) % 9
 
-	baseRate := 10 * math.Pow(1.75, float64(realmIndex)) * (1 + float64(minorIndex)*0.05)
+	baseRate := 0.13 * math.Pow(1.38, float64(realmIndex)) * (1 + float64(minorIndex)*0.07)
 	if baseRate < 1 {
 		return 1
 	}

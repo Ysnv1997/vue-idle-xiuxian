@@ -9,42 +9,92 @@
     <n-card :bordered="false" class="page-card">
       <n-tabs type="line">
           <n-tab-pane name="equipment" tab="装备">
-            <n-grid :cols="2" :x-gap="12" :y-gap="8">
-              <n-grid-item v-for="(name, type) in equipmentTypes" :key="type">
-                <n-card hoverable @click="showEquipmentList(type)">
-                  <template #header>
-                    <n-space justify="space-between">
-                      <span>{{ name }}</span>
-                      <n-button
-                        size="small"
-                        type="error"
-                        @click.stop="unequipItem(type)"
-                        v-if="playerStore.equippedArtifacts[type]"
-                      >
-                        卸下
-                      </n-button>
-                    </n-space>
-                  </template>
-                  <p v-if="playerStore.equippedArtifacts[type]">
-                    {{ playerStore.equippedArtifacts[type].name }}
-                  </p>
-                  <p v-else>未装备</p>
-                  <template #footer>
-                    <n-space justify="space-between">
-                      <span>{{ name }}</span>
-                      <n-button
-                        size="small"
-                        type="info"
-                        @click.stop="showEquipmentDetails(playerStore.equippedArtifacts[type])"
-                        v-if="playerStore.equippedArtifacts[type]"
-                      >
-                        详细
-                      </n-button>
-                    </n-space>
-                  </template>
+            <n-space vertical>
+              <n-alert type="info" :show-icon="false">
+                装备改为按部位管理。出售操作需要二次确认，默认通过“详情”查看后再处理，减少误卖。
+              </n-alert>
+
+              <div class="equipment-layout">
+                <n-card size="small" title="已装备部位" class="equipment-slots-card">
+                  <div class="equipment-slot-grid">
+                    <div v-for="(name, type) in equipmentTypes" :key="type" class="equipment-slot-card">
+                      <div class="equipment-slot-head">
+                        <strong>{{ name }}</strong>
+                        <n-tag v-if="selectedEquipmentType === type" type="primary" size="small" bordered>当前仓库</n-tag>
+                      </div>
+                      <template v-if="playerStore.equippedArtifacts[type]">
+                        <div class="equipment-slot-name">{{ playerStore.equippedArtifacts[type].name }}</div>
+                        <n-tag size="small" :bordered="false" :style="{ color: playerStore.equippedArtifacts[type].qualityInfo?.color }">
+                          {{ playerStore.equippedArtifacts[type].qualityInfo?.name || '未知品质' }}
+                        </n-tag>
+                        <div class="equipment-slot-actions">
+                          <n-button size="small" tertiary @click="showEquipmentList(type)">查看仓库</n-button>
+                          <n-button size="small" type="info" @click="showEquipmentDetails(playerStore.equippedArtifacts[type])">详情</n-button>
+                          <n-button size="small" type="warning" @click="unequipItem(type)">卸下</n-button>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <div class="equipment-slot-empty">未装备</div>
+                        <n-button size="small" tertiary @click="showEquipmentList(type)">查看该部位</n-button>
+                      </template>
+                    </div>
+                  </div>
                 </n-card>
-              </n-grid-item>
-            </n-grid>
+
+                <n-card size="small" class="equipment-list-card">
+                  <template #header>
+                    {{ equipmentTypes[selectedEquipmentType] || '装备仓库' }}
+                  </template>
+                  <template #header-extra>
+                    <n-space>
+                      <n-select v-model:value="selectedEquipmentType" :options="equipmentTypeOptions" style="width: 140px" />
+                      <n-select v-model:value="selectedQuality" :options="qualityOptions" style="width: 140px" />
+                    </n-space>
+                  </template>
+
+                  <n-space vertical>
+                    <div class="equipment-list-toolbar">
+                      <n-text depth="3">当前共有 {{ filteredEquipmentList.length }} 件符合条件的装备</n-text>
+                      <n-button type="warning" secondary :disabled="filteredEquipmentList.length === 0" @click="openBatchSellConfirm">
+                        一键卖出筛选结果
+                      </n-button>
+                    </div>
+
+                    <div v-if="equipmentList.length" class="equipment-item-list">
+                      <div v-for="equipment in equipmentList" :key="equipment.id" class="equipment-row-card">
+                        <div class="equipment-row-main">
+                          <div>
+                            <div class="equipment-row-title">{{ equipment.name }}</div>
+                            <div class="equipment-row-meta">
+                              <n-tag size="small" :bordered="false" :style="{ color: equipment.qualityInfo.color }">
+                                {{ equipment.qualityInfo.name }}
+                              </n-tag>
+                              <span>需求：{{ getRealmName(equipment.requiredRealm).name }}</span>
+                            </div>
+                            <div class="equipment-row-stats">{{ summarizeEquipmentStats(equipment) }}</div>
+                          </div>
+                          <div class="equipment-row-actions">
+                            <n-button size="small" type="primary" @click="equipItem(equipment)">装备</n-button>
+                            <n-button size="small" tertiary @click="showEquipmentDetails(equipment)">详情</n-button>
+                            <n-button size="small" type="info" @click="quickListAuction(equipment)">上架</n-button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <n-empty v-else description="当前筛选条件下没有装备" />
+
+                    <n-pagination
+                      v-if="filteredEquipmentList.length > equipmentPageSize"
+                      v-model:page="currentEquipmentPage"
+                      :page-size="equipmentPageSize"
+                      :item-count="filteredEquipmentList.length"
+                      @update:page-size="onEquipmentPageSizeChange"
+                      :page-slot="5"
+                    />
+                  </n-space>
+                </n-card>
+              </div>
+            </n-space>
           </n-tab-pane>
           <n-tab-pane name="herbs" tab="灵草">
             <n-grid :cols="2" :x-gap="12" :y-gap="8" v-if="groupedHerbs.length">
@@ -144,7 +194,7 @@
                 一键放生
               </n-button>
             </n-space>
-            <n-modal v-model:show="showBatchReleaseConfirm" preset="dialog" title="批量放生确认" style="width: 600px">
+            <n-modal v-model:show="showBatchReleaseConfirm" preset="dialog" title="批量放生确认" style="width: min(600px, calc(100vw - 20px))">
               <p>
                 确定要放生{{
                   selectedRarityToRelease === 'all' ? '所有' : petRarities[selectedRarityToRelease].name
@@ -197,7 +247,7 @@
     </n-card>
   </section>
   <!-- 灵宠详情弹窗 -->
-  <n-modal v-model:show="showPetModal" preset="dialog" title="灵宠详情" style="width: 600px">
+  <n-modal v-model:show="showPetModal" preset="dialog" title="灵宠详情" style="width: min(600px, calc(100vw - 20px))">
     <template v-if="selectedPet">
       <n-descriptions bordered>
         <n-descriptions-item label="名称">{{ selectedPet.name }}</n-descriptions-item>
@@ -327,7 +377,7 @@
         <n-space justify="space-between">
           <span>放生灵宠（不会返还已消耗的道具）</span>
           <n-button size="small" type="error" @click="confirmReleasePet(selectedPet)">放生灵宠</n-button>
-          <n-modal v-model:show="showReleaseConfirm" preset="dialog" title="灵宠放生" style="width: 600px">
+          <n-modal v-model:show="showReleaseConfirm" preset="dialog" title="灵宠放生" style="width: min(600px, calc(100vw - 20px))">
             <template v-if="petToRelease">
               <p>确定要放生 {{ petToRelease.name }} 吗？此操作不可撤销，且不会返还已消耗的道具。</p>
               <n-space justify="end" style="margin-top: 16px">
@@ -339,50 +389,6 @@
         </n-space>
       </n-space>
     </template>
-  </n-modal>
-  <!-- 装备列表弹窗 -->
-  <n-modal
-    v-model:show="showEquipmentModal"
-    preset="dialog"
-    :title="`${equipmentTypes[selectedEquipmentType]}列表`"
-    style="width: 800px"
-  >
-    <n-space vertical>
-      <n-space justify="space-between">
-        <n-select v-model:value="selectedQuality" :options="qualityOptions" style="width: 150px" />
-        <n-button type="warning" :disabled="equipmentList.length === 0" @click="batchSellEquipments">一键卖出</n-button>
-      </n-space>
-      <n-pagination
-        v-model:page="currentEquipmentPage"
-        :page-size="equipmentPageSize"
-        :item-count="filteredEquipmentList.length"
-        v-if="equipmentList.length > 8"
-        @update:page-size="onEquipmentPageSizeChange"
-        :page-slot="7"
-      />
-      <n-grid :cols="2" :x-gap="12" :y-gap="8" v-if="equipmentList.length">
-        <n-grid-item v-for="equipment in equipmentList" :key="equipment.id" @click="showEquipmentDetails(equipment)">
-          <n-card hoverable>
-            <template #header>
-              <n-space justify="space-between">
-                <span>{{ equipment.name }}</span>
-                <n-space>
-                  <n-button size="small" type="info" @click.stop="quickListAuction(equipment)">上架拍卖</n-button>
-                  <n-button size="small" type="warning" @click.stop="sellEquipment(equipment)">卖出</n-button>
-                </n-space>
-              </n-space>
-            </template>
-            <n-space vertical>
-              <n-tag :style="{ color: equipment.qualityInfo.color }">
-                {{ equipment.qualityInfo.name }}
-              </n-tag>
-              <n-text>境界要求：{{ getRealmName(equipment.requiredRealm).name }}</n-text>
-            </n-space>
-          </n-card>
-        </n-grid-item>
-      </n-grid>
-      <n-empty description="没有任何装备" v-else></n-empty>
-    </n-space>
   </n-modal>
   <!-- 装备详情弹窗 -->
   <n-modal v-model:show="showEquipmentDetailModal" preset="dialog" :title="selectedEquipment?.name || '装备详情'">
@@ -468,7 +474,7 @@
           </n-button>
           <n-button
             type="error"
-            @click="sellEquipment(selectedEquipment)"
+            @click="confirmSellEquipment(selectedEquipment)"
             v-if="selectedEquipment?.id != playerStore.equippedArtifacts[selectedEquipment?.slot]?.id"
           >
             出售
@@ -478,7 +484,7 @@
     </template>
   </n-modal>
   <!-- 强化确认弹窗 -->
-  <n-modal v-model:show="showEnhanceConfirm" preset="dialog" title="装备强化">
+  <n-modal v-model:show="showEnhanceConfirm" preset="dialog" title="装备强化" style="width: min(640px, calc(100vw - 20px))">
     <n-space vertical>
       <p>是否消耗 {{ ((selectedEquipment?.enhanceLevel || 0) + 1) * 10 }} 强化石强化装备？</p>
       <p>当前强化石数量：{{ playerStore.reinforceStones }}</p>
@@ -497,7 +503,7 @@
     </template>
   </n-modal>
   <!-- 洗练确认弹窗 -->
-  <n-modal v-model:show="showReforgeConfirm" preset="dialog" title="洗练结果确认">
+  <n-modal v-model:show="showReforgeConfirm" preset="dialog" title="洗练结果确认" style="width: min(640px, calc(100vw - 20px))">
     <template v-if="reforgeResult">
       <div class="reforge-compare">
         <div class="old-stats">
@@ -519,7 +525,7 @@
       <n-button @click="confirmReforgeResult(false)">保留原属性</n-button>
     </template>
   </n-modal>
-  <n-modal v-model:show="showAuctionListConfirm" preset="dialog" title="上架坊市确认" style="width: 520px">
+  <n-modal v-model:show="showAuctionListConfirm" preset="dialog" title="上架坊市确认" style="width: min(520px, calc(100vw - 20px))">
     <template v-if="auctionListingItem">
       <n-space vertical :size="12">
         <n-descriptions bordered :column="1">
@@ -553,6 +559,42 @@
         >
           确认上架
         </n-button>
+      </n-space>
+    </template>
+  </n-modal>
+
+  <n-modal v-model:show="showSingleSellConfirm" preset="dialog" title="确认出售装备" style="width: min(520px, calc(100vw - 20px))">
+    <template v-if="equipmentToSell">
+      <n-space vertical>
+        <n-alert type="warning" :show-icon="false">出售后不可恢复，请确认不是想保留、强化或上架的装备。</n-alert>
+        <n-descriptions bordered :column="1">
+          <n-descriptions-item label="装备名称">{{ equipmentToSell.name }}</n-descriptions-item>
+          <n-descriptions-item label="装备品质">{{ equipmentToSell.qualityInfo?.name || '未知品质' }}</n-descriptions-item>
+          <n-descriptions-item label="出售收益">{{ getSellPrice(equipmentToSell) }} 强化石</n-descriptions-item>
+        </n-descriptions>
+      </n-space>
+    </template>
+    <template #action>
+      <n-space justify="end">
+        <n-button @click="cancelSellEquipment">取消</n-button>
+        <n-button type="error" @click="sellEquipmentConfirmed">确认出售</n-button>
+      </n-space>
+    </template>
+  </n-modal>
+
+  <n-modal v-model:show="showBatchSellConfirm" preset="dialog" title="确认批量出售装备" style="width: min(560px, calc(100vw - 20px))">
+    <n-space vertical>
+      <n-alert type="warning" :show-icon="false">将批量出售当前筛选结果中的所有装备，请谨慎操作。</n-alert>
+      <n-descriptions bordered :column="1">
+        <n-descriptions-item label="部位筛选">{{ equipmentTypes[selectedEquipmentType] || '未选择' }}</n-descriptions-item>
+        <n-descriptions-item label="品质筛选">{{ currentQualityLabel }}</n-descriptions-item>
+        <n-descriptions-item label="装备数量">{{ filteredEquipmentList.length }}</n-descriptions-item>
+      </n-descriptions>
+    </n-space>
+    <template #action>
+      <n-space justify="end">
+        <n-button @click="showBatchSellConfirm = false">取消</n-button>
+        <n-button type="error" @click="batchSellEquipments">确认批量出售</n-button>
       </n-space>
     </template>
   </n-modal>
@@ -897,7 +939,7 @@
   const showEquipmentList = type => {
     selectedType.value = type
     selectedEquipmentType.value = type
-    showEquipmentModal.value = true
+    currentEquipmentPage.value = 1
   }
 
   // 卸下装备
@@ -920,11 +962,19 @@
   }
 
   // 装备列表相关
-  const showEquipmentModal = ref(false)
   const selectedEquipmentType = ref('')
   const selectedQuality = ref('all')
   const currentEquipmentPage = ref(1)
   const equipmentPageSize = ref(8)
+  const showSingleSellConfirm = ref(false)
+  const equipmentToSell = ref(null)
+  const showBatchSellConfirm = ref(false)
+
+  const equipmentTypeOptions = computed(() => {
+    return Object.entries(equipmentTypes).map(([value, label]) => ({ label, value }))
+  })
+
+  const currentQualityLabel = computed(() => qualityOptions.value.find(option => option.value === selectedQuality.value)?.label || '全部品质')
 
   // 装备品质选项
   const qualityOptions = computed(() => {
@@ -981,6 +1031,15 @@
     } catch (error) {
       message.error(error?.message || '批量卖出失败')
     }
+    showBatchSellConfirm.value = false
+  }
+
+  const openBatchSellConfirm = () => {
+    if (filteredEquipmentList.value.length === 0) {
+      message.warning('当前筛选条件下没有可出售的装备')
+      return
+    }
+    showBatchSellConfirm.value = true
   }
 
   const defaultAuctionPrice = item => {
@@ -1071,9 +1130,20 @@
   }
 
   // 卖出单件装备
-  const sellEquipment = async equipment => {
+  const confirmSellEquipment = equipment => {
+    equipmentToSell.value = equipment
+    showSingleSellConfirm.value = true
+  }
+
+  const cancelSellEquipment = () => {
+    equipmentToSell.value = null
+    showSingleSellConfirm.value = false
+  }
+
+  const sellEquipmentConfirmed = async () => {
+    if (!equipmentToSell.value) return
     try {
-      const result = await inventorySellEquipment(String(equipment.id))
+      const result = await inventorySellEquipment(String(equipmentToSell.value.id))
       applyServerInventoryResult(result)
       message.success(result?.message || '卖出成功')
       showEquipmentDetailModal.value = false
@@ -1086,7 +1156,33 @@
       } else {
         message.error(error?.message || '卖出失败')
       }
+    } finally {
+      cancelSellEquipment()
     }
+  }
+
+  const getSellPrice = equipment => {
+    const quality = equipment?.quality
+    const priceMap = {
+      common: 10,
+      uncommon: 25,
+      rare: 60,
+      epic: 150,
+      legendary: 320,
+      mythic: 600
+    }
+    const basePrice = priceMap[quality] || 10
+    return basePrice + Math.floor(Number(equipment?.enhanceLevel || 0) * 5)
+  }
+
+  const summarizeEquipmentStats = equipment => {
+    if (!equipment?.stats || typeof equipment.stats !== 'object') {
+      return '暂无属性信息'
+    }
+    return Object.entries(equipment.stats)
+      .slice(0, 3)
+      .map(([stat, value]) => `${getStatName(stat)} ${formatStatValue(stat, value)}`)
+      .join(' · ')
   }
 
   // 显示装备详情
@@ -1180,7 +1276,6 @@
     try {
       const result = await inventoryEquipEquipment(String(equipment.id))
       applyServerInventoryResult(result)
-      showEquipmentModal.value = false
       showEquipmentDetailModal.value = false
       message.success(result?.message || '装备成功')
     } catch (error) {
@@ -1323,6 +1418,79 @@
 </script>
 
 <style scoped>
+  .equipment-layout {
+    display: grid;
+    grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+
+  .equipment-slot-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .equipment-slot-card,
+  .equipment-row-card {
+    border: 1px solid rgba(127, 127, 127, 0.16);
+    border-radius: 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .equipment-slot-head,
+  .equipment-list-toolbar,
+  .equipment-row-main,
+  .equipment-row-actions,
+  .equipment-slot-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .equipment-slot-head,
+  .equipment-list-toolbar,
+  .equipment-row-main {
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .equipment-slot-actions,
+  .equipment-row-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .equipment-slot-name,
+  .equipment-row-title {
+    font-weight: 700;
+    color: var(--ink-main);
+  }
+
+  .equipment-slot-name {
+    margin: 6px 0;
+  }
+
+  .equipment-slot-empty,
+  .equipment-row-stats {
+    color: var(--ink-sub);
+    font-size: 13px;
+  }
+
+  .equipment-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 6px 0;
+  }
+
+  .equipment-item-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
   .n-card {
     cursor: pointer;
   }
@@ -1348,5 +1516,43 @@
     margin-bottom: 12px;
     font-size: 16px;
     color: #666;
+  }
+
+  @media (max-width: 768px) {
+    .equipment-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .equipment-slot-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .equipment-list-toolbar,
+    .equipment-row-main {
+      flex-direction: column;
+    }
+
+    .equipment-row-actions,
+    .equipment-slot-actions {
+      justify-content: flex-start;
+    }
+
+    :deep(.n-grid) {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    :deep(.n-tabs-nav-scroll-content) {
+      width: 100%;
+    }
+
+    :deep(.n-tabs-tab) {
+      flex: 1;
+      justify-content: center;
+    }
+
+    .reforge-compare {
+      flex-direction: column;
+      gap: 12px;
+    }
   }
 </style>

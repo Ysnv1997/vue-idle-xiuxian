@@ -71,6 +71,7 @@ type ChatMessage struct {
 	SenderUserID        string    `json:"senderUserId,omitempty"`
 	SenderLinuxDoUserID string    `json:"senderLinuxDoUserId,omitempty"`
 	SenderName          string    `json:"senderName"`
+	SenderRealm         string    `json:"senderRealm,omitempty"`
 	Content             string    `json:"content"`
 	CreatedAt           time.Time `json:"createdAt"`
 }
@@ -234,10 +235,12 @@ func (s *ChatService) History(ctx context.Context, channel string, limit int) (*
 			COALESCE(cm.sender_user_id::text, ''),
 			COALESCE(u.linux_do_user_id, ''),
 			cm.sender_name,
+			COALESCE(pp.realm, ''),
 			cm.content,
 			cm.created_at
 		FROM chat_messages cm
 		LEFT JOIN users u ON u.id = cm.sender_user_id
+		LEFT JOIN player_profiles pp ON pp.user_id = cm.sender_user_id
 		WHERE cm.channel = $1
 		ORDER BY cm.created_at DESC
 		LIMIT $2
@@ -258,6 +261,7 @@ func (s *ChatService) History(ctx context.Context, channel string, limit int) (*
 			&message.SenderUserID,
 			&message.SenderLinuxDoUserID,
 			&message.SenderName,
+			&message.SenderRealm,
 			&message.Content,
 			&message.CreatedAt,
 		); err != nil {
@@ -322,7 +326,12 @@ func (s *ChatService) Send(ctx context.Context, userID uuid.UUID, channel string
 		SenderUserID:        userID.String(),
 		SenderLinuxDoUserID: strings.TrimSpace(user.LinuxDoUserID),
 		SenderName:          user.LinuxDoUsername,
+		SenderRealm:         "",
 		Content:             filtered,
+	}
+	if snapshot, snapErr := s.userRepo.GetSnapshot(ctx, userID); snapErr == nil && snapshot != nil {
+		message.SenderName = snapshot.Name
+		message.SenderRealm = snapshot.Realm
 	}
 	if err := s.pool.QueryRow(ctx, insertSQL, channel, userID, message.SenderName, filtered).Scan(&message.ID, &message.CreatedAt); err != nil {
 		return nil, fmt.Errorf("insert chat message: %w", err)

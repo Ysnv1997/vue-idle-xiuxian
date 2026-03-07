@@ -30,17 +30,17 @@
                     color="#18a058"
                   />
 
-                  <n-descriptions bordered :column="1">
-                    <n-descriptions-item label="当前状态">{{ meditationStateLabel }}</n-descriptions-item>
-                    <n-descriptions-item label="当前灵力">
-                      {{ formatDecimal(meditationCurrentSpirit, 1) }} / {{ formatDecimal(meditationSpiritCap, 1) }}
-                    </n-descriptions-item>
-                    <n-descriptions-item label="打坐恢复速度">
-                      {{ formatDecimal(meditationCurrentRate, 2) }} / 秒
-                    </n-descriptions-item>
-                    <n-descriptions-item label="本轮累计恢复">
-                      {{ formatDecimal(meditationTotalSpiritGain, 1) }}
-                    </n-descriptions-item>
+                    <n-descriptions bordered :column="1">
+                      <n-descriptions-item label="当前状态">{{ meditationStateLabel }}</n-descriptions-item>
+                      <n-descriptions-item label="当前灵力">
+                        {{ meditationCurrentSpiritDisplay }} / {{ meditationSpiritCapDisplay }}
+                      </n-descriptions-item>
+                      <n-descriptions-item label="打坐恢复速度">
+                        {{ meditationCurrentRateDisplay }} / 秒
+                      </n-descriptions-item>
+                      <n-descriptions-item label="本轮累计恢复">
+                        {{ meditationTotalSpiritGainDisplay }}
+                      </n-descriptions-item>
                     <n-descriptions-item label="预计充满时间">
                       {{ meditationFillEstimateLabel }}
                     </n-descriptions-item>
@@ -103,7 +103,7 @@
 
                   <n-space justify="space-between">
                     <n-text>最低等级：{{ selectedHuntingMap.minLevel }}</n-text>
-                    <n-text>推荐效率：{{ huntingEstimatedPerHour }} 修为/小时</n-text>
+                    <n-text>推荐效率：{{ huntingEstimatedPerHourDisplay }} 修为/小时</n-text>
                   </n-space>
 
                   <n-space justify="space-between">
@@ -131,8 +131,8 @@
                   </n-text>
 
                   <n-space justify="space-between">
-                    <n-text>单次消耗：{{ huntingEstimatedSpiritCost }} 灵力</n-text>
-                    <n-text>单次收益：{{ huntingEstimatedGain }} 修为</n-text>
+                    <n-text>单次消耗：{{ huntingEstimatedSpiritCostDisplay }} 灵力</n-text>
+                    <n-text>单次收益：{{ huntingEstimatedGainDisplay }} 修为</n-text>
                   </n-space>
 
                   <n-space justify="space-between">
@@ -142,8 +142,8 @@
 
                   <n-space justify="space-between">
                     <n-text>累计击杀：{{ huntingKillCount }}</n-text>
-                    <n-text>累计消耗：{{ huntingTotalSpiritCost }} 灵力</n-text>
-                    <n-text>累计修为：{{ huntingTotalCultivationGain }}</n-text>
+                    <n-text>累计消耗：{{ huntingTotalSpiritCostDisplay }} 灵力</n-text>
+                    <n-text>累计修为：{{ huntingTotalCultivationGainDisplay }}</n-text>
                   </n-space>
 
                   <n-space>
@@ -207,6 +207,7 @@
   import LogPanel from '../components/LogPanel.vue'
   import { useGameRealtimeStore } from '../stores/game-realtime'
   import { usePlayerStore } from '../stores/player'
+  import { formatScaledGrowth } from '../utils/growth-display'
   import {
     breakthrough as breakthroughApi,
     listHuntingMaps as listHuntingMapsApi,
@@ -280,6 +281,17 @@
 
   const formatDecimal = (value, digits = 1) => {
     return toFiniteNumber(value, 0).toFixed(digits)
+  }
+
+  const formatGrowth = (value, maximumFractionDigits = 0) => {
+    return formatScaledGrowth(value, { maximumFractionDigits })
+  }
+
+  const formatGrowthDecimal = (value, digits = 1) => {
+    return formatScaledGrowth(value, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
+    })
   }
 
   const formatDuration = seconds => {
@@ -506,6 +518,11 @@
     return formatDuration((spiritCap - currentSpirit) / currentRate)
   })
 
+  const meditationCurrentSpiritDisplay = computed(() => formatGrowthDecimal(meditationCurrentSpirit.value, 1))
+  const meditationSpiritCapDisplay = computed(() => formatGrowthDecimal(meditationSpiritCap.value, 1))
+  const meditationCurrentRateDisplay = computed(() => formatGrowthDecimal(meditationCurrentRate.value, 2))
+  const meditationTotalSpiritGainDisplay = computed(() => formatGrowthDecimal(meditationTotalSpiritGain.value, 1))
+
   const canBreakthrough = computed(() => {
     return (
       playerStore.cultivation >= playerStore.maxCultivation &&
@@ -618,6 +635,9 @@
     return Math.max(1, Math.floor(toFiniteNumber(selectedHuntingMap.value.estimatedGain, 1)))
   })
 
+  const huntingEstimatedSpiritCostDisplay = computed(() => formatGrowth(huntingEstimatedSpiritCost.value))
+  const huntingEstimatedGainDisplay = computed(() => formatGrowth(huntingEstimatedGain.value))
+
   const selectedMapRecommendedPower = computed(() => {
     return Math.max(0, Math.floor(toFiniteNumber(selectedHuntingMap.value?.recommendedPower, 0)))
   })
@@ -666,6 +686,8 @@
     return Math.max(0, Math.floor(toFiniteNumber(selectedHuntingMap.value?.estimatedPerHour, 0)))
   })
 
+  const huntingEstimatedPerHourDisplay = computed(() => formatGrowth(huntingEstimatedPerHour.value))
+
   const isHuntingRunning = computed(() => {
     return Boolean(huntingRunStatus.value?.isActive)
   })
@@ -701,6 +723,9 @@
   const huntingTotalCultivationGain = computed(() => {
     return Math.max(0, Math.floor(toFiniteNumber(huntingRunStatus.value?.totalCultivationGain, 0)))
   })
+
+  const huntingTotalSpiritCostDisplay = computed(() => formatGrowth(huntingTotalSpiritCost.value))
+  const huntingTotalCultivationGainDisplay = computed(() => formatGrowth(huntingTotalCultivationGain.value))
 
   const huntingProgressPercent = computed(() => {
     if (!isHuntingRunning.value) return 0
@@ -935,6 +960,10 @@
     width: 100%;
   }
 
+  :deep(.n-descriptions-table-content) {
+    word-break: break-word;
+  }
+
   .hunting-progress-block {
     margin-top: 4px;
   }
@@ -952,5 +981,30 @@
   .hunting-progress-percent {
     min-width: 56px;
     text-align: right;
+  }
+
+  @media (max-width: 768px) {
+    :deep(.n-tabs-nav-scroll-content) {
+      width: 100%;
+    }
+
+    :deep(.n-tabs-tab) {
+      flex: 1;
+      justify-content: center;
+    }
+
+    :deep(.n-descriptions) {
+      --n-td-padding: 8px;
+    }
+
+    .hunting-progress-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .hunting-progress-percent {
+      min-width: 0;
+      text-align: left;
+    }
   }
 </style>

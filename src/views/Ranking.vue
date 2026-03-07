@@ -27,7 +27,7 @@
             <n-empty v-if="follows.length === 0" description="暂无关注，去全服榜点击关注即可加入好友榜。" />
             <div v-else class="follow-list">
               <div v-for="follow in follows" :key="follow.userId" class="follow-item">
-                <span>{{ follow.name }} · {{ follow.realm }}</span>
+                <button class="profile-link" @click="openProfile(follow.userId)">{{ follow.name }} · {{ follow.realm }}</button>
                 <n-button
                   size="tiny"
                   tertiary
@@ -52,7 +52,8 @@
         <n-empty v-else description="暂无个人排行数据" />
 
         <n-spin :show="loading">
-          <n-table striped size="small">
+          <div class="ranking-table-wrap">
+            <n-table striped size="small">
             <thead>
               <tr>
                 <th style="width: 80px">排名</th>
@@ -65,7 +66,7 @@
             <tbody>
               <tr v-for="entry in entries" :key="entry.userId">
                 <td>#{{ entry.rank }}</td>
-                <td>{{ entry.name }}</td>
+                <td><button class="profile-link" @click="openProfile(entry.userId)">{{ entry.name }}</button></td>
                 <td>{{ entry.realm }}</td>
                 <td>{{ formatValue(entry.value) }}</td>
                 <td>
@@ -87,10 +88,13 @@
                 </td>
               </tr>
             </tbody>
-          </n-table>
+            </n-table>
+          </div>
         </n-spin>
       </n-space>
     </n-card>
+
+    <player-profile-dialog v-model:show="showProfileDialog" :loading="profileLoading" :profile="selectedProfile" />
   </section>
 </template>
 
@@ -103,6 +107,8 @@
     followRankingUser,
     unfollowRankingUser
   } from '../api/modules/ranking'
+  import { fetchPublicPlayerProfile } from '../api/modules/player'
+  import PlayerProfileDialog from '../components/PlayerProfileDialog.vue'
   import { useSessionStore } from '../stores/session'
 
   const message = useMessage()
@@ -119,6 +125,9 @@
   const entries = ref([])
   const selfEntry = ref(null)
   const follows = ref([])
+  const showProfileDialog = ref(false)
+  const profileLoading = ref(false)
+  const selectedProfile = ref(null)
 
   const rankingOptions = [
     { label: '境界榜', value: 'realm' },
@@ -241,6 +250,22 @@
     }
   }
 
+  const openProfile = async userId => {
+    const normalized = String(userId || '').trim()
+    if (!normalized) return
+    showProfileDialog.value = true
+    profileLoading.value = true
+    selectedProfile.value = null
+    try {
+      selectedProfile.value = await fetchPublicPlayerProfile(normalized)
+    } catch (error) {
+      message.error(error?.message || '加载玩家资料失败')
+      showProfileDialog.value = false
+    } finally {
+      profileLoading.value = false
+    }
+  }
+
   watch([rankingType, rankingScope], () => {
     loadRankings()
   })
@@ -274,5 +299,35 @@
 
   .follow-item:last-child {
     border-bottom: none;
+  }
+
+  .profile-link {
+    border: none;
+    background: transparent;
+    padding: 0;
+    color: var(--accent-primary);
+    cursor: pointer;
+    font-weight: 700;
+  }
+
+  .ranking-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  @media (max-width: 768px) {
+    .follow-item {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .ranking-toolbar :deep(.n-base-selection),
+    .ranking-toolbar :deep(.n-input-number) {
+      width: 100% !important;
+    }
+
+    .ranking-toolbar :deep(.n-button) {
+      width: 100%;
+    }
   }
 </style>

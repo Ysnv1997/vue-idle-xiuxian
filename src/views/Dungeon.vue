@@ -1017,4 +1017,60 @@ const handleRefreshOptions = async () => {
       gap: 14px;
     }
   }
+
+  @media (max-width: 768px) {
+    .control-row :deep(.n-base-selection),
+    .control-row :deep(.n-button) {
+      width: 100% !important;
+    }
+
+    .option-cards {
+      padding: 0;
+      gap: 10px;
+    }
+
+    .option-card {
+      min-height: auto;
+      padding: 14px;
+    }
+
+    .option-name {
+      padding-right: 0;
+      margin-bottom: 8px;
+      font-size: 1.05em;
+    }
+
+    .option-quality {
+      position: static;
+      align-self: flex-start;
+      margin-top: 4px;
+    }
+
+    .combat-scene {
+      padding: 12px;
+      min-height: auto;
+    }
+
+    .character {
+      width: 100%;
+    }
+
+    .character-name {
+      width: 100%;
+    }
+
+    .health-bar {
+      width: 100%;
+      max-width: 240px;
+    }
+
+    :deep(.n-modal .n-card) {
+      width: calc(100vw - 20px);
+      max-width: calc(100vw - 20px);
+    }
+
+    :deep(.n-descriptions) {
+      --n-td-padding: 8px;
+    }
+  }
 </style>

@@ -25,7 +25,7 @@
                       </div>
                       <div class="stat-chip">
                         <span>灵力</span>
-                        <strong>{{ playerStore.spirit.toFixed(2) }}</strong>
+                        <strong>{{ displaySpirit }}</strong>
                       </div>
                     </div>
 
@@ -44,18 +44,22 @@
               <n-layout-content class="app-content">
                 <div class="workspace">
                   <aside class="side-column panel-enter-left">
-                    <n-card :bordered="false" class="cultivator-card">
-                      <div class="cultivator-head">
-                        <div class="name-seal">{{ playerInitial }}</div>
+                      <n-card :bordered="false" class="cultivator-card">
+                        <div class="cultivator-head">
+                        <div class="name-avatar-wrap">
+                          <img v-if="linuxDoAvatar" :src="linuxDoAvatar" alt="LinuxDo Avatar" class="linuxdo-avatar" />
+                          <div v-else class="name-seal">{{ playerInitial }}</div>
+                        </div>
                         <div>
-                          <h2>{{ playerStore.name }}</h2>
-                          <p>{{ currentRealmName }}</p>
+                           <h2>{{ playerStore.name }}</h2>
+                           <p>{{ currentRealmName }}</p>
+                           <p v-if="linuxDoUserId" class="linuxdo-id">LinuxDo ID: {{ linuxDoUserId }}</p>
                         </div>
                       </div>
 
                       <div class="progress-meta">
                         <span>当前修为</span>
-                        <strong>{{ formatNumber(playerStore.cultivation) }} / {{ formatNumber(playerStore.maxCultivation) }}</strong>
+                        <strong>{{ displayCultivation }} / {{ displayMaxCultivation }}</strong>
                       </div>
                       <n-progress
                         type="line"
@@ -242,6 +246,7 @@
   import { usePlayerStore } from './stores/player'
   import { useGameRealtimeStore } from './stores/game-realtime'
   import { useSessionStore } from './stores/session'
+  import { formatScaledGrowth } from './utils/growth-display'
 
   const router = useRouter()
   const route = useRoute()
@@ -261,6 +266,8 @@
   const activeWindowHours = ref(12)
 
   const currentRealmName = computed(() => getRealmName(playerStore.level).name)
+  const linuxDoAvatar = computed(() => String(sessionStore.user?.avatar || '').trim())
+  const linuxDoUserId = computed(() => String(sessionStore.user?.linuxDoUserId || '').trim())
   const playerInitial = computed(() => {
     const source = String(playerStore.name || '').trim()
     return source ? source.slice(0, 1) : '修'
@@ -270,6 +277,9 @@
     if (max <= 0) return 0
     return Number(((Number(playerStore.cultivation || 0) / max) * 100).toFixed(2))
   })
+  const displaySpirit = computed(() => formatScaledGrowth(playerStore.spirit, { maximumFractionDigits: 1 }))
+  const displayCultivation = computed(() => formatScaledGrowth(playerStore.cultivation))
+  const displayMaxCultivation = computed(() => formatScaledGrowth(playerStore.maxCultivation))
   const showGameShell = computed(() => sessionStore.isAuthenticated)
   const showGlobalChatDock = computed(() => showGameShell.value && !isLoading.value)
   const activeWorldAnnouncement = computed(() => gameRealtimeStore.activeWorldAnnouncement)
@@ -721,6 +731,21 @@
     margin-bottom: 14px;
   }
 
+  .name-avatar-wrap {
+    width: 46px;
+    height: 46px;
+    flex-shrink: 0;
+  }
+
+  .linuxdo-avatar {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    object-fit: cover;
+    border: 1px solid rgba(127, 127, 127, 0.2);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+  }
+
   .name-seal {
     width: 46px;
     height: 46px;
@@ -745,6 +770,11 @@
     margin-top: 4px;
     font-size: 13px;
     color: var(--ink-sub);
+  }
+
+  .linuxdo-id {
+    font-size: 12px;
+    letter-spacing: 0.02em;
   }
 
   .progress-meta {
@@ -1013,12 +1043,35 @@
   }
 
   @media (max-width: 720px) {
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 1100;
+    }
+
     .app-content {
       padding: 10px;
     }
 
     .header-wrap {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
       padding: 10px 12px;
+    }
+
+    .header-right {
+      width: 100%;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+
+    .resource-ribbon {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
     }
 
     .brand-title {
@@ -1026,7 +1079,44 @@
     }
 
     .stat-chip {
-      min-width: 102px;
+      min-width: 0;
+      padding: 10px 8px;
+    }
+
+    .theme-switch {
+      align-self: flex-end;
+    }
+
+    .workspace {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .side-column {
+      order: 2;
+    }
+
+    .stage-column {
+      order: 1;
+    }
+
+    .cultivator-head {
+      align-items: flex-start;
+    }
+
+    .progress-meta {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .detail-collapse :deep(.n-descriptions) {
+      --n-td-padding: 8px;
+    }
+
+    .nav-scroll :deep(.n-menu.n-menu--horizontal .n-menu-item),
+    .nav-scroll :deep(.n-menu.n-menu--horizontal .n-submenu) {
+      min-width: 88px;
+      justify-content: center;
     }
 
     .quick-grid {
@@ -1050,6 +1140,32 @@
     .page-view {
       padding: 12px;
       gap: 12px;
+    }
+
+    .stage-shell {
+      min-height: auto;
+    }
+
+    .page-head h2 {
+      font-size: 22px;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .brand-presence {
+      font-size: 12px;
+    }
+
+    .resource-ribbon {
+      grid-template-columns: 1fr;
+    }
+
+    .cultivator-head h2 {
+      font-size: 20px;
+    }
+
+    .page-view {
+      padding: 10px;
     }
   }
 </style>

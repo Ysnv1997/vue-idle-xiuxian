@@ -59,3 +59,17 @@ type PlayerSnapshot struct {
 	ActivePetID       string          `json:"activePetId"`
 	ActiveEffects     json.RawMessage `json:"activeEffects"`
 }
+
+type PublicPlayerProfile struct {
+	UserID            uuid.UUID       `json:"userId"`
+	Name              string          `json:"name"`
+	Level             int             `json:"level"`
+	Realm             string          `json:"realm"`
+	BaseAttributes    json.RawMessage `json:"baseAttributes"`
+	CombatAttributes  json.RawMessage `json:"combatAttributes"`
+	CombatResistance  json.RawMessage `json:"combatResistance"`
+	SpecialAttributes json.RawMessage `json:"specialAttributes"`
+	EquippedArtifacts json.RawMessage `json:"equippedArtifacts"`
+	ActivePetID       string          `json:"activePetId"`
+	Items             json.RawMessage `json:"items"`
+}

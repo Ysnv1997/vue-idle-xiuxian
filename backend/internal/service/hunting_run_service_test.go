@@ -55,7 +55,7 @@ func TestResolveHuntingEncounterVictory(t *testing.T) {
 	}
 
 	state := testHuntingRunState(map[string]float64{"health": 2000, "attack": 500, "defense": 150, "speed": 40})
-	state.Spirit = 1000
+	state.Spirit = 5000
 	state.CultivationRate = 1
 	now := time.Unix(1700000100, 0)
 
@@ -100,7 +100,7 @@ func TestResolveHuntingEncounterDefeatStartsRevive(t *testing.T) {
 	}
 
 	state := testHuntingRunState(map[string]float64{"health": 30, "attack": 2, "defense": 0, "speed": 1})
-	state.Spirit = 100
+	state.Spirit = 5000
 	now := time.Unix(1700000200, 0)
 
 	outcome, _, _, err := resolveHuntingEncounter(state, targetMap, nil, nil, huntingEncounterConfig{

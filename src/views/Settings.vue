@@ -23,7 +23,7 @@
         <n-alert type="success" :show-icon="false">
           当前登录：<strong>{{ sessionStore.user?.username || '道友' }}</strong>
         </n-alert>
-        <n-space>
+        <n-space class="settings-actions">
           <n-button type="error" secondary :loading="loggingOut" @click="confirmLogout">退出登录</n-button>
         </n-space>
       </n-space>
@@ -38,7 +38,7 @@
         <n-space v-if="canManageAdmins" vertical>
           <n-text depth="3">管理员管理（超管）</n-text>
 
-          <n-space align="end">
+          <n-space align="end" class="settings-form-row">
             <n-input v-model:value="newAdminLinuxDoUserId" placeholder="LinuxDo 用户 ID" style="min-width: 240px" />
             <n-select
               v-model:value="newAdminRole"
@@ -51,8 +51,9 @@
             <n-button :loading="adminLoading" @click="loadAdminUsers">刷新</n-button>
           </n-space>
 
-          <n-spin :show="adminLoading">
-            <n-table striped size="small">
+            <n-spin :show="adminLoading">
+             <div class="settings-table-wrap">
+               <n-table striped size="small">
               <thead>
                 <tr>
                   <th>LinuxDo 用户 ID</th>
@@ -89,8 +90,9 @@
                   </td>
                 </tr>
               </tbody>
-            </n-table>
-          </n-spin>
+               </n-table>
+             </div>
+            </n-spin>
         </n-space>
 
         <template v-if="canManageRuntimeConfigs">
@@ -99,7 +101,7 @@
           <n-space vertical>
             <n-text depth="3">运行时配置（运营/超管）</n-text>
 
-            <n-space align="end">
+            <n-space align="end" class="settings-form-row">
               <n-input v-model:value="runtimeConfigForm.key" placeholder="配置 key（如 chat.send.min_gap_ms）" style="min-width: 280px" />
               <n-input v-model:value="runtimeConfigForm.value" placeholder="配置值" style="min-width: 180px" />
               <n-select
@@ -113,7 +115,7 @@
               <n-button type="primary" :loading="runtimeConfigSubmitting" @click="submitRuntimeConfig">保存配置</n-button>
             </n-space>
 
-            <n-space align="end">
+            <n-space align="end" class="settings-form-row">
               <n-input
                 v-model:value="runtimeConfigFilterCategory"
                 placeholder="按分类过滤（如 chat / gameplay）"
@@ -128,7 +130,8 @@
             </n-space>
 
             <n-spin :show="runtimeConfigLoading">
-              <n-table striped size="small">
+              <div class="settings-table-wrap">
+                <n-table striped size="small">
                 <thead>
                   <tr>
                     <th>key</th>
@@ -158,7 +161,8 @@
                     </td>
                   </tr>
                 </tbody>
-              </n-table>
+                </n-table>
+              </div>
             </n-spin>
           </n-space>
 
@@ -167,14 +171,15 @@
           <n-space vertical>
             <n-text depth="3">运行时配置变更审计</n-text>
 
-            <n-space align="end">
+            <n-space align="end" class="settings-form-row">
               <n-input v-model:value="runtimeAuditKey" placeholder="按配置 key 过滤" style="min-width: 260px" />
               <n-input v-model:value="runtimeAuditCategory" placeholder="按分类过滤" style="min-width: 180px" />
               <n-button :loading="runtimeAuditLoading" @click="loadRuntimeConfigAudits">刷新审计</n-button>
             </n-space>
 
             <n-spin :show="runtimeAuditLoading">
-              <n-table striped size="small">
+              <div class="settings-table-wrap">
+                <n-table striped size="small">
                 <thead>
                   <tr>
                     <th>时间</th>
@@ -204,7 +209,8 @@
                     </td>
                   </tr>
                 </tbody>
-              </n-table>
+                </n-table>
+              </div>
             </n-spin>
           </n-space>
         </template>
@@ -215,7 +221,7 @@
           <n-space vertical>
             <n-text depth="3">聊天禁言管理（聊天管理/超管）</n-text>
 
-            <n-space align="end">
+            <n-space align="end" class="settings-form-row">
               <n-input v-model:value="chatMuteTargetLinuxDoUserId" placeholder="目标 LinuxDo 用户 ID" style="min-width: 220px" />
               <n-select
                 v-model:value="chatMuteDurationMinutes"
@@ -232,7 +238,8 @@
             </n-space>
 
             <n-spin :show="chatMuteListLoading">
-              <n-table striped size="small">
+              <div class="settings-table-wrap">
+                <n-table striped size="small">
                 <thead>
                   <tr>
                     <th style="width: 150px">目标用户ID</th>
@@ -262,14 +269,15 @@
                     </td>
                   </tr>
                 </tbody>
-              </n-table>
+                </n-table>
+              </div>
             </n-spin>
 
             <n-divider />
 
             <n-text depth="3">聊天举报审核（聊天管理/超管）</n-text>
 
-            <n-space align="end">
+            <n-space align="end" class="settings-form-row">
               <n-select
                 v-model:value="chatReportFilterStatus"
                 :options="chatReportStatusOptions"
@@ -281,7 +289,8 @@
             </n-space>
 
             <n-spin :show="chatReportLoading">
-              <n-table striped size="small">
+              <div class="settings-table-wrap">
+                <n-table striped size="small">
                 <thead>
                   <tr>
                     <th style="width: 80px">ID</th>
@@ -336,14 +345,15 @@
                     </td>
                   </tr>
                 </tbody>
-              </n-table>
+                </n-table>
+              </div>
             </n-spin>
 
             <n-divider />
 
             <n-text depth="3">聊天违禁词配置（聊天管理/超管）</n-text>
 
-            <n-space align="end">
+            <n-space align="end" class="settings-form-row">
               <n-input v-model:value="adminBlockedWord" placeholder="新增或更新违禁词" style="min-width: 280px" />
               <n-select
                 v-model:value="adminBlockedWordEnabled"
@@ -356,7 +366,8 @@
             </n-space>
 
             <n-spin :show="chatBlockedWordLoading">
-              <n-table striped size="small">
+              <div class="settings-table-wrap">
+                <n-table striped size="small">
                 <thead>
                   <tr>
                     <th style="width: 200px">违禁词</th>
@@ -393,14 +404,15 @@
                     </td>
                   </tr>
                 </tbody>
-              </n-table>
+                </n-table>
+              </div>
             </n-spin>
           </n-space>
         </template>
       </n-space>
     </n-card>
 
-    <n-modal preset="dialog" title="玩家交流群" v-model:show="qq">
+    <n-modal preset="dialog" title="玩家交流群" v-model:show="qq" style="width: min(640px, calc(100vw - 20px))">
       <n-card :bordered="false" size="huge" role="dialog" aria-modal="true">
         <n-space vertical>
           <n-text depth="3">微信群</n-text>
@@ -964,3 +976,28 @@
     }
   })
 </script>
+
+<style scoped>
+  .settings-actions,
+  .settings-form-row {
+    width: 100%;
+  }
+
+  .settings-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  @media (max-width: 768px) {
+    .settings-form-row :deep(.n-input),
+    .settings-form-row :deep(.n-base-selection),
+    .settings-form-row :deep(.n-input-number),
+    .settings-form-row :deep(.n-button) {
+      width: 100% !important;
+    }
+
+    .settings-actions :deep(.n-button) {
+      width: 100%;
+    }
+  }
+</style>
