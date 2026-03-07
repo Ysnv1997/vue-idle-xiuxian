@@ -124,6 +124,12 @@ func (s *DungeonService) Start(ctx context.Context, userID uuid.UUID, difficulty
 	if err := stopMeditationForConflictTx(ctx, tx, userID, "进入秘境，打坐已自动结束"); err != nil {
 		return nil, err
 	}
+	if err := ensureExplorationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopExplorationForConflictTx(ctx, tx, userID, "进入秘境，自动探索已结束"); err != nil {
+		return nil, err
+	}
 
 	const progressQuery = `
 		SELECT highest_floor, highest_floor_2x, highest_floor_5x, highest_floor_10x, highest_floor_100x

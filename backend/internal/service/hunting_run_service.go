@@ -22,6 +22,7 @@ const (
 	huntingRunStateExhausted  = "exhausted"
 	huntingRunStateStopped    = "stopped"
 	huntingRunStateOffline    = "offline_timeout"
+	huntingRunStateSystem     = "system_stopped"
 	huntingBattleStateTimeout = "timeout"
 
 	// 刷图定位为日常主升级玩法：单位灵力收益默认约为打坐的 2 倍。
@@ -145,25 +146,85 @@ type huntingEnemyTier struct {
 	DropMultiplier float64
 }
 
+type huntingEncounterConfig struct {
+	OccurredAt       time.Time
+	GainMultiplier   float64
+	ReviveMultiplier float64
+	HealBaseRate     float64
+	HealCapRate      float64
+	RefundChance     float64
+	RefundMinRatio   float64
+	RefundMaxRatio   float64
+	EffectBonus      huntingEffectBonus
+	RNG              *rand.Rand
+}
+
+type huntingEncounterOutcome struct {
+	State             string
+	MonsterName       string
+	EnemyTier         string
+	SpiritCost        int64
+	SpiritRefund      int64
+	CultivationGain   int64
+	DoubleGain        bool
+	DoubleGainTimes   int
+	BreakthroughTimes int64
+	DroppedEquipments []HuntingDroppedEquipment
+	LogMessage        string
+	PersistChanged    bool
+	ItemsChanged      bool
+	HerbsChanged      bool
+}
+
 func (s *GameService) HuntingStatus(ctx context.Context, userID uuid.UUID) (*HuntingRunStatusResult, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin hunting status transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	const query = `
+		SELECT
+			COALESCE(phr.is_active, FALSE),
+			COALESCE(phr.map_id, ''),
+			COALESCE(phr.map_name, ''),
+			COALESCE(phr.current_hp, 0),
+			COALESCE(phr.max_hp, 0),
+			COALESCE(phr.kill_count, 0),
+			COALESCE(phr.total_spirit_cost, 0),
+			COALESCE(phr.total_cultivation_gain, 0),
+			COALESCE(phr.last_state, ''),
+			COALESCE(phr.revive_until, to_timestamp(0)),
+			COALESCE(phr.last_log_seq, 0),
+			COALESCE(phr.last_log_message, ''),
+			COALESCE(phr.updated_at, now())
+		FROM player_profiles pp
+		LEFT JOIN player_hunting_runs phr ON phr.user_id = pp.user_id
+		WHERE pp.user_id = $1
+	`
 
-	if err := ensureHuntingRunRow(ctx, tx, userID); err != nil {
-		return nil, err
+	state := &huntingRunState{}
+	if err := s.pool.QueryRow(ctx, query, userID).Scan(
+		&state.RunActive,
+		&state.MapID,
+		&state.MapName,
+		&state.CurrentHP,
+		&state.MaxHP,
+		&state.KillCount,
+		&state.TotalSpiritCost,
+		&state.TotalCultivationGain,
+		&state.LastState,
+		&state.ReviveUntil,
+		&state.LastLogSeq,
+		&state.LastLogMessage,
+		&state.RunUpdatedAt,
+	); err != nil {
+		if err == pgx.ErrNoRows {
+			return &HuntingRunStatusResult{
+				IsActive: false,
+				State:    huntingRunStateStopped,
+			}, nil
+		}
+		return nil, fmt.Errorf("query hunting status: %w", err)
 	}
 
-	state, err := loadHuntingRunStateForUpdate(ctx, tx, userID)
-	if err != nil {
-		return nil, err
-	}
 	status := buildHuntingRunStatus(state, time.Now())
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit hunting status transaction: %w", err)
+	if status.State == "" {
+		status.State = huntingRunStateStopped
 	}
 	return status, nil
 }
@@ -206,6 +267,12 @@ func (s *GameService) HuntingStart(ctx context.Context, userID uuid.UUID, mapID 
 	if err := stopMeditationForConflictTx(ctx, tx, userID, "进入刷怪地图，打坐已自动结束"); err != nil {
 		return nil, err
 	}
+	if err := ensureExplorationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopExplorationForConflictTx(ctx, tx, userID, "进入刷怪地图，自动探索已结束"); err != nil {
+		return nil, err
+	}
 
 	nowMilli := time.Now().UnixMilli()
 	activeEffects, bonus := huntingDecodeActiveEffects(state.ActiveEffectsRaw, nowMilli)
@@ -228,7 +295,10 @@ func (s *GameService) HuntingStart(ctx context.Context, userID uuid.UUID, mapID 
 			last_log_message = '',
 			started_at = now(),
 			ended_at = NULL,
-			updated_at = now()
+			updated_at = now(),
+			last_processed_at = now(),
+			failure_count = 0,
+			last_error = ''
 		WHERE user_id = $1
 	`
 	if _, err := tx.Exec(
@@ -251,7 +321,13 @@ func (s *GameService) HuntingStart(ctx context.Context, userID uuid.UUID, mapID 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit hunting start transaction: %w", err)
 	}
-	s.notifyRealtime(userID, GameRealtimeTopicHunting, GameRealtimeTopicMeditation, GameRealtimeTopicSnapshot)
+	s.notifyRealtime(
+		userID,
+		GameRealtimeTopicHunting,
+		GameRealtimeTopicMeditation,
+		GameRealtimeTopicExploration,
+		GameRealtimeTopicSnapshot,
+	)
 
 	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 	if err != nil {
@@ -307,6 +383,8 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		return nil, &InvalidHuntingMapError{MapID: state.MapID}
 	}
 	huntingGainMultiplier := s.getHuntingWinGainMultiplier(ctx)
+	healBaseRate, healCapRate := s.getHuntingAutoHealRates(ctx)
+	reviveMultiplier := s.getHuntingReviveMultiplier(ctx)
 	refundChance, refundMinRatio, refundMaxRatio := s.getHuntingSpiritRefundConfig(ctx)
 
 	now := time.Now()
@@ -363,7 +441,10 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 				last_log_seq = $5,
 				last_log_message = $6,
 				ended_at = NULL,
-				updated_at = now()
+				updated_at = now(),
+				last_processed_at = now(),
+				failure_count = 0,
+				last_error = ''
 			WHERE user_id = $1
 		`
 		if _, err := tx.Exec(
@@ -402,360 +483,84 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 		}, nil
 	}
 
-	mapBaseGain := fixedHuntingMapBaseGain(targetMap)
-	spiritCost := fixedHuntingMapSpiritCost(targetMap)
+	items, err := huntingDecodeItems(state.ItemsRaw)
+	if err != nil {
+		return nil, err
+	}
+	herbs, err := huntingDecodeHerbs(state.HerbsRaw)
+	if err != nil {
+		return nil, err
+	}
+	outcome, nextItems, nextHerbs, err := resolveHuntingEncounter(state, targetMap, items, herbs, huntingEncounterConfig{
+		OccurredAt:       now,
+		GainMultiplier:   huntingGainMultiplier,
+		ReviveMultiplier: reviveMultiplier,
+		HealBaseRate:     healBaseRate,
+		HealCapRate:      healCapRate,
+		RefundChance:     refundChance,
+		RefundMinRatio:   refundMinRatio,
+		RefundMaxRatio:   refundMaxRatio,
+		EffectBonus:      effectBonus,
+		RNG:              rand.New(rand.NewSource(time.Now().UnixNano())),
+	})
+	if err != nil {
+		return nil, err
+	}
 
-	if state.Spirit < float64(spiritCost) {
-		state.RunActive = false
-		state.LastState = huntingRunStateExhausted
-		state.ReviveUntil = time.Time{}
-		state.RunUpdatedAt = now
-		setHuntingRunLog(state, "灵力耗尽，刷怪暂停")
-
-		const stopRunSQL = `
-			UPDATE player_hunting_runs
-			SET
-				is_active = $2,
-				current_hp = $3,
-				max_hp = $4,
-				kill_count = $5,
-				total_spirit_cost = $6,
-					total_cultivation_gain = $7,
-					last_state = $8,
-					revive_until = NULL,
-					last_log_seq = $9,
-					last_log_message = $10,
-					ended_at = now(),
-					updated_at = now()
-				WHERE user_id = $1
-			`
-		if _, err := tx.Exec(
-			ctx,
-			stopRunSQL,
-			userID,
-			false,
-			state.CurrentHP,
-			state.MaxHP,
-			state.KillCount,
-			state.TotalSpiritCost,
-			state.TotalCultivationGain,
-			state.LastState,
-			state.LastLogSeq,
-			state.LastLogMessage,
-		); err != nil {
-			return nil, fmt.Errorf("stop hunting run by spirit exhaustion: %w", err)
+	if outcome.PersistChanged {
+		if err := persistCultivationState(ctx, tx, userID, &cultivationState{
+			Level:           state.Level,
+			Realm:           state.Realm,
+			Cultivation:     state.Cultivation,
+			MaxCultivation:  state.MaxCultivation,
+			Spirit:          state.Spirit,
+			SpiritRate:      state.SpiritRate,
+			Luck:            state.Luck,
+			CultivationRate: state.CultivationRate,
+		}, boolToInt64(outcome.CultivationGain > 0), outcome.BreakthroughTimes > 0); err != nil {
+			return nil, err
 		}
+		if outcome.BreakthroughTimes > 1 {
+			if err := incrementBreakthroughCountTx(ctx, tx, userID, outcome.BreakthroughTimes-1); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if outcome.ItemsChanged || outcome.HerbsChanged {
+		if err := updateHuntingInventoryTx(ctx, tx, userID, nextItems, nextHerbs, activeEffects); err != nil {
+			return nil, err
+		}
+	} else {
 		if err := updateHuntingActiveEffectsTx(ctx, tx, userID, activeEffects); err != nil {
 			return nil, err
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, fmt.Errorf("commit hunting exhaustion transaction: %w", err)
-		}
-		s.notifyRealtime(userID, GameRealtimeTopicHunting, GameRealtimeTopicSnapshot)
-
-		snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
-		if err != nil {
+	}
+	if state.RunActive {
+		if err := updateActiveHuntingRunTx(ctx, tx, userID, state); err != nil {
 			return nil, err
 		}
-		runStatus := buildHuntingRunStatus(state, now)
-		return &HuntingRunTickResult{
-			Message:    state.LastLogMessage,
-			State:      huntingRunStateExhausted,
-			MapID:      targetMap.ID,
-			MapName:    targetMap.Name,
-			SpiritCost: 0,
-			Logs:       []string{state.LastLogMessage},
-			Run:        runStatus,
-			Snapshot:   snapshot,
-		}, nil
+	} else {
+		if err := stopHuntingRunWithStateTx(ctx, tx, userID, state, state.LastState, now); err != nil {
+			return nil, err
+		}
 	}
-
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	player := buildHuntingPlayerEntity(state, effectBonus)
-	enemy, tier := generateHuntingEnemy(state.Level, state.KillCount, targetMap, rng)
-
-	state.Spirit -= float64(spiritCost)
-	battleState := runHuntingAutoBattle(player, enemy, rng)
 
 	result := &HuntingRunTickResult{
-		State:       huntingRunStateRunning,
-		MapID:       targetMap.ID,
-		MapName:     targetMap.Name,
-		MonsterName: enemy.Name,
-		EnemyTier:   tier.DisplayName,
-		SpiritCost:  spiritCost,
-		Logs:        []string{},
-	}
-
-	droppedEquipments := make([]HuntingDroppedEquipment, 0, 1)
-	breakthrough := false
-	cultivationGain := int64(0)
-	doubleGain := false
-	doubleGainTimes := 0
-	spiritRefund := int64(0)
-
-	if battleState == dungeonBattleStateVictory {
-		cultivationGain = int64(math.Ceil(float64(mapBaseGain) * huntingGainMultiplier * tier.GainMultiplier))
-		if cultivationGain <= 0 {
-			cultivationGain = 1
-		}
-
-		if shouldDoubleGain(state.Luck) {
-			doubleGain = true
-			doubleGainTimes = 1
-			cultivationGain *= 2
-		}
-
-		effectiveCultivationRate := state.CultivationRate * (1 + effectBonus.CultivationRateBonus)
-		cultivationGain = applyCultivationRate(cultivationGain, effectiveCultivationRate)
-
-		state.Cultivation += cultivationGain
-		if state.Cultivation >= state.MaxCultivation {
-			cultivationStateView := buildCultivationStateFromHunting(state)
-			breakthrough = applyBreakthrough(cultivationStateView)
-			applyCultivationStateToHunting(state, cultivationStateView)
-		}
-
-		// 胜利后恢复一定生命，保证刷图可持续性。
-		baseRecoverRate, capRecoverRate := s.getHuntingAutoHealRates(ctx)
-		totalRecoverRate := resolveHuntingHealRate(baseRecoverRate, capRecoverRate, effectBonus.AutoHealRate)
-		if totalRecoverRate > 0 {
-			dungeonHeal(player, player.Stats.MaxHealth*totalRecoverRate)
-		}
-
-		spiritRefund = rollHuntingSpiritRefund(spiritCost, refundChance, refundMinRatio, refundMaxRatio, rng)
-		if spiritRefund > 0 {
-			state.Spirit += float64(spiritRefund)
-		}
-
-		items, err := huntingDecodeItems(state.ItemsRaw)
-		if err != nil {
-			return nil, err
-		}
-		herbs, err := huntingDecodeHerbs(state.HerbsRaw)
-		if err != nil {
-			return nil, err
-		}
-		herbDropped := herbItem{}
-		hasHerbDrop := false
-
-		if dropped, ok := maybeHuntingDropEquipment(state.Level, targetMap, tier, rng); ok {
-			items = append(items, dropped)
-			droppedEquipments = append(droppedEquipments, huntingBuildDroppedEquipmentView(dropped))
-		}
-		if droppedHerb, ok := maybeHuntingDropHerb(targetMap, tier, rng); ok {
-			herbs = append(herbs, droppedHerb)
-			herbDropped = droppedHerb
-			hasHerbDrop = true
-		}
-
-		if err := persistCultivationState(ctx, tx, userID, &cultivationState{
-			Level:           state.Level,
-			Realm:           state.Realm,
-			Cultivation:     state.Cultivation,
-			MaxCultivation:  state.MaxCultivation,
-			Spirit:          state.Spirit,
-			SpiritRate:      state.SpiritRate,
-			Luck:            state.Luck,
-			CultivationRate: state.CultivationRate,
-		}, 1, breakthrough); err != nil {
-			return nil, err
-		}
-
-		if err := updateHuntingInventoryTx(ctx, tx, userID, items, herbs, activeEffects); err != nil {
-			return nil, err
-		}
-
-		nextKillCount := state.KillCount + 1
-		nextTotalSpirit := state.TotalSpiritCost + spiritCost
-		nextTotalCultivation := state.TotalCultivationGain + cultivationGain
-		state.KillCount = nextKillCount
-		state.TotalSpiritCost = nextTotalSpirit
-		state.TotalCultivationGain = nextTotalCultivation
-		state.CurrentHP = player.CurrentHealth
-		state.MaxHP = player.Stats.MaxHealth
-		state.LastState = huntingRunStateRunning
-		state.ReviveUntil = time.Time{}
-		state.RunUpdatedAt = now
-		logMessage := fmt.Sprintf("你击杀了%s，获得%d修为", enemy.Name, cultivationGain)
-		if spiritRefund > 0 {
-			logMessage = fmt.Sprintf("%s，返还%d灵力", logMessage, spiritRefund)
-		}
-		if hasHerbDrop {
-			logMessage = fmt.Sprintf("%s，并采得灵草%s", logMessage, herbDropped.Name)
-		}
-		setHuntingRunLog(state, logMessage)
-
-		const updateRunSQL = `
-			UPDATE player_hunting_runs
-			SET
-				is_active = TRUE,
-				current_hp = $2,
-				max_hp = $3,
-				kill_count = $4,
-				total_spirit_cost = $5,
-				total_cultivation_gain = $6,
-				last_state = $7,
-				revive_until = NULL,
-				last_log_seq = $8,
-				last_log_message = $9,
-				updated_at = now()
-			WHERE user_id = $1
-		`
-		if _, err := tx.Exec(
-			ctx,
-			updateRunSQL,
-			userID,
-			state.CurrentHP,
-			state.MaxHP,
-			nextKillCount,
-			nextTotalSpirit,
-			nextTotalCultivation,
-			state.LastState,
-			state.LastLogSeq,
-			state.LastLogMessage,
-		); err != nil {
-			return nil, fmt.Errorf("update hunting run on victory: %w", err)
-		}
-
-		result.Message = state.LastLogMessage
-		result.State = huntingRunStateRunning
-		result.CultivationGain = cultivationGain
-		result.SpiritRefund = spiritRefund
-		result.DoubleGain = doubleGain
-		result.DoubleGainTimes = doubleGainTimes
-		result.Breakthrough = breakthrough
-		result.DroppedEquipments = droppedEquipments
-		result.Logs = []string{state.LastLogMessage}
-		result.Run = buildHuntingRunStatus(state, now)
-	} else if battleState == huntingBattleStateTimeout {
-		if err := persistCultivationState(ctx, tx, userID, &cultivationState{
-			Level:           state.Level,
-			Realm:           state.Realm,
-			Cultivation:     state.Cultivation,
-			MaxCultivation:  state.MaxCultivation,
-			Spirit:          state.Spirit,
-			SpiritRate:      state.SpiritRate,
-			Luck:            state.Luck,
-			CultivationRate: state.CultivationRate,
-		}, 0, false); err != nil {
-			return nil, err
-		}
-		if err := updateHuntingActiveEffectsTx(ctx, tx, userID, activeEffects); err != nil {
-			return nil, err
-		}
-
-		nextTotalSpirit := state.TotalSpiritCost + spiritCost
-		state.TotalSpiritCost = nextTotalSpirit
-		state.CurrentHP = player.CurrentHealth
-		state.MaxHP = player.Stats.MaxHealth
-		state.LastState = huntingRunStateRunning
-		state.ReviveUntil = time.Time{}
-		state.RunUpdatedAt = now
-		setHuntingRunLog(state, fmt.Sprintf("与%s缠斗未分胜负，继续周旋", enemy.Name))
-
-		const updateRunSQL = `
-			UPDATE player_hunting_runs
-			SET
-				is_active = TRUE,
-				current_hp = $2,
-				max_hp = $3,
-				total_spirit_cost = $4,
-				last_state = $5,
-				revive_until = NULL,
-				last_log_seq = $6,
-				last_log_message = $7,
-				ended_at = NULL,
-				updated_at = now()
-			WHERE user_id = $1
-		`
-		if _, err := tx.Exec(
-			ctx,
-			updateRunSQL,
-			userID,
-			state.CurrentHP,
-			state.MaxHP,
-			nextTotalSpirit,
-			state.LastState,
-			state.LastLogSeq,
-			state.LastLogMessage,
-		); err != nil {
-			return nil, fmt.Errorf("update hunting run on timeout: %w", err)
-		}
-
-		result.Message = state.LastLogMessage
-		result.State = huntingRunStateRunning
-		result.CultivationGain = 0
-		result.Logs = []string{state.LastLogMessage}
-		result.Run = buildHuntingRunStatus(state, now)
-	} else {
-		if err := persistCultivationState(ctx, tx, userID, &cultivationState{
-			Level:           state.Level,
-			Realm:           state.Realm,
-			Cultivation:     state.Cultivation,
-			MaxCultivation:  state.MaxCultivation,
-			Spirit:          state.Spirit,
-			SpiritRate:      state.SpiritRate,
-			Luck:            state.Luck,
-			CultivationRate: state.CultivationRate,
-		}, 0, false); err != nil {
-			return nil, err
-		}
-		if err := updateHuntingActiveEffectsTx(ctx, tx, userID, activeEffects); err != nil {
-			return nil, err
-		}
-
-		nextTotalSpirit := state.TotalSpiritCost + spiritCost
-		reviveDuration := resolveHuntingReviveDuration(
-			huntingReviveDuration(state.Level, targetMap),
-			s.getHuntingReviveMultiplier(ctx),
-		)
-		reviveSeconds := int64(reviveDuration / time.Second)
-		if reviveSeconds < 1 {
-			reviveSeconds = 1
-		}
-		state.TotalSpiritCost = nextTotalSpirit
-		state.CurrentHP = 0
-		state.MaxHP = player.Stats.MaxHealth
-		state.LastState = huntingRunStateReviving
-		state.ReviveUntil = now.Add(reviveDuration)
-		state.RunUpdatedAt = now
-		setHuntingRunLog(state, fmt.Sprintf("你已战死，%d秒后自动复活", reviveSeconds))
-
-		const updateRunSQL = `
-			UPDATE player_hunting_runs
-			SET
-				is_active = TRUE,
-				current_hp = 0,
-				max_hp = $2,
-				total_spirit_cost = $3,
-				last_state = $4,
-				revive_until = $5,
-				last_log_seq = $6,
-				last_log_message = $7,
-				ended_at = NULL,
-				updated_at = now()
-			WHERE user_id = $1
-		`
-		if _, err := tx.Exec(
-			ctx,
-			updateRunSQL,
-			userID,
-			state.MaxHP,
-			nextTotalSpirit,
-			state.LastState,
-			state.ReviveUntil,
-			state.LastLogSeq,
-			state.LastLogMessage,
-		); err != nil {
-			return nil, fmt.Errorf("update hunting run on defeat: %w", err)
-		}
-
-		result.Message = state.LastLogMessage
-		result.State = huntingRunStateReviving
-		result.CultivationGain = 0
-		result.Logs = []string{state.LastLogMessage}
-		result.Run = buildHuntingRunStatus(state, now)
+		Message:           outcome.LogMessage,
+		State:             outcome.State,
+		MapID:             targetMap.ID,
+		MapName:           targetMap.Name,
+		MonsterName:       outcome.MonsterName,
+		EnemyTier:         outcome.EnemyTier,
+		SpiritCost:        outcome.SpiritCost,
+		SpiritRefund:      outcome.SpiritRefund,
+		CultivationGain:   outcome.CultivationGain,
+		DoubleGain:        outcome.DoubleGain,
+		DoubleGainTimes:   outcome.DoubleGainTimes,
+		Breakthrough:      outcome.BreakthroughTimes > 0,
+		DroppedEquipments: outcome.DroppedEquipments,
+		Logs:              []string{outcome.LogMessage},
+		Run:               buildHuntingRunStatus(state, now),
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -766,6 +571,22 @@ func (s *GameService) HuntingTick(ctx context.Context, userID uuid.UUID) (*Hunti
 	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if snapshot != nil && outcome.BreakthroughTimes > 0 && s.realtimeBroker != nil {
+		for _, realmName := range majorRealmTransitionsBetween(state.Level-int(outcome.BreakthroughTimes), state.Level) {
+			publishWorldAnnouncement(ctx, s.realtimeBroker, buildMajorRealmBreakthroughAnnouncement(snapshot.Name, realmName))
+		}
+	}
+	if snapshot != nil && s.realtimeBroker != nil {
+		for _, dropped := range outcome.DroppedEquipments {
+			if shouldAnnounceRareEquipmentQuality(dropped.Quality) {
+				qualityName := dropped.Quality
+				if cfg, ok := gachaEquipmentQualities[dropped.Quality]; ok {
+					qualityName = cfg.Name
+				}
+				publishWorldAnnouncement(ctx, s.realtimeBroker, buildRareLootAnnouncement(snapshot.Name, dropped.Name, qualityName, "装备"))
+			}
+		}
 	}
 	result.Snapshot = snapshot
 	return result, nil
@@ -794,7 +615,10 @@ func (s *GameService) HuntingStop(ctx context.Context, userID uuid.UUID) (*Hunti
 				last_state = $2,
 				revive_until = NULL,
 				ended_at = now(),
-				updated_at = now()
+				updated_at = now(),
+				last_processed_at = now(),
+				failure_count = 0,
+				last_error = ''
 			WHERE user_id = $1
 		`
 	if _, err := tx.Exec(ctx, stopRunSQL, userID, huntingRunStateStopped); err != nil {
@@ -1236,6 +1060,141 @@ func updateHuntingInventoryTx(
 		return fmt.Errorf("update hunting inventory state: %w", err)
 	}
 	return nil
+}
+
+func resolveHuntingEncounter(
+	state *huntingRunState,
+	targetMap huntingMapConfig,
+	items []map[string]any,
+	herbs []herbItem,
+	cfg huntingEncounterConfig,
+) (*huntingEncounterOutcome, []map[string]any, []herbItem, error) {
+	outcome := &huntingEncounterOutcome{
+		State:          huntingRunStateRunning,
+		PersistChanged: false,
+	}
+	spiritCost := fixedHuntingMapSpiritCost(targetMap)
+	outcome.SpiritCost = spiritCost
+	if state.Spirit < float64(spiritCost) {
+		state.RunActive = false
+		state.LastState = huntingRunStateExhausted
+		state.ReviveUntil = time.Time{}
+		state.RunUpdatedAt = cfg.OccurredAt
+		setHuntingRunLog(state, "灵力耗尽，刷怪暂停")
+		outcome.State = huntingRunStateExhausted
+		outcome.LogMessage = state.LastLogMessage
+		return outcome, items, herbs, nil
+	}
+
+	player := buildHuntingPlayerEntity(state, cfg.EffectBonus)
+	state.Spirit -= float64(spiritCost)
+	state.TotalSpiritCost += spiritCost
+	state.RunUpdatedAt = cfg.OccurredAt
+	outcome.PersistChanged = true
+
+	enemy, tier := generateHuntingEnemy(state.Level, state.KillCount, targetMap, cfg.RNG)
+	outcome.MonsterName = enemy.Name
+	outcome.EnemyTier = tier.DisplayName
+	battleState := runHuntingAutoBattle(player, enemy, cfg.RNG)
+
+	if battleState == huntingBattleStateTimeout {
+		state.CurrentHP = player.CurrentHealth
+		state.MaxHP = player.Stats.MaxHealth
+		state.LastState = huntingRunStateRunning
+		state.ReviveUntil = time.Time{}
+		setHuntingRunLog(state, fmt.Sprintf("与%s缠斗未分胜负，继续周旋", enemy.Name))
+		outcome.LogMessage = state.LastLogMessage
+		return outcome, items, herbs, nil
+	}
+
+	if battleState != dungeonBattleStateVictory {
+		reviveDuration := resolveHuntingReviveDuration(
+			huntingReviveDuration(state.Level, targetMap),
+			cfg.ReviveMultiplier,
+		)
+		reviveSeconds := int64(reviveDuration / time.Second)
+		if reviveSeconds < 1 {
+			reviveSeconds = 1
+		}
+		state.CurrentHP = 0
+		state.MaxHP = player.Stats.MaxHealth
+		state.LastState = huntingRunStateReviving
+		state.ReviveUntil = cfg.OccurredAt.Add(reviveDuration)
+		setHuntingRunLog(state, fmt.Sprintf("你已战死，%d秒后自动复活", reviveSeconds))
+		outcome.State = huntingRunStateReviving
+		outcome.LogMessage = state.LastLogMessage
+		return outcome, items, herbs, nil
+	}
+
+	cultivationGain := int64(math.Ceil(float64(fixedHuntingMapBaseGain(targetMap)) * cfg.GainMultiplier * tier.GainMultiplier))
+	if cultivationGain <= 0 {
+		cultivationGain = 1
+	}
+	if shouldDoubleGain(state.Luck) {
+		outcome.DoubleGain = true
+		outcome.DoubleGainTimes = 1
+		cultivationGain *= 2
+	}
+	effectiveCultivationRate := state.CultivationRate * (1 + cfg.EffectBonus.CultivationRateBonus)
+	cultivationGain = applyCultivationRate(cultivationGain, effectiveCultivationRate)
+	state.Cultivation += cultivationGain
+	state.TotalCultivationGain += cultivationGain
+	state.KillCount += 1
+	outcome.CultivationGain = cultivationGain
+
+	if state.Cultivation >= state.MaxCultivation {
+		cultivationStateView := buildCultivationStateFromHunting(state)
+		if applyBreakthrough(cultivationStateView) {
+			outcome.BreakthroughTimes = 1
+		}
+		applyCultivationStateToHunting(state, cultivationStateView)
+	}
+
+	totalRecoverRate := resolveHuntingHealRate(cfg.HealBaseRate, cfg.HealCapRate, cfg.EffectBonus.AutoHealRate)
+	if totalRecoverRate > 0 {
+		dungeonHeal(player, player.Stats.MaxHealth*totalRecoverRate)
+	}
+	spiritRefund := rollHuntingSpiritRefund(spiritCost, cfg.RefundChance, cfg.RefundMinRatio, cfg.RefundMaxRatio, cfg.RNG)
+	if spiritRefund > 0 {
+		state.Spirit += float64(spiritRefund)
+		outcome.SpiritRefund = spiritRefund
+	}
+
+	herbDropped := herbItem{}
+	hasHerbDrop := false
+	if dropped, ok := maybeHuntingDropEquipment(state.Level, targetMap, tier, cfg.RNG); ok {
+		items = append(items, dropped)
+		outcome.ItemsChanged = true
+		outcome.DroppedEquipments = append(outcome.DroppedEquipments, huntingBuildDroppedEquipmentView(dropped))
+	}
+	if droppedHerb, ok := maybeHuntingDropHerb(targetMap, tier, cfg.RNG); ok {
+		herbs = append(herbs, droppedHerb)
+		outcome.HerbsChanged = true
+		herbDropped = droppedHerb
+		hasHerbDrop = true
+	}
+
+	state.CurrentHP = player.CurrentHealth
+	state.MaxHP = player.Stats.MaxHealth
+	state.LastState = huntingRunStateRunning
+	state.ReviveUntil = time.Time{}
+	logMessage := fmt.Sprintf("你击杀了%s，获得%d修为", enemy.Name, cultivationGain)
+	if spiritRefund > 0 {
+		logMessage = fmt.Sprintf("%s，返还%d灵力", logMessage, spiritRefund)
+	}
+	if hasHerbDrop {
+		logMessage = fmt.Sprintf("%s，并采得灵草%s", logMessage, herbDropped.Name)
+	}
+	setHuntingRunLog(state, logMessage)
+	outcome.LogMessage = state.LastLogMessage
+	return outcome, items, herbs, nil
+}
+
+func boolToInt64(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func generateHuntingEnemy(level int, killCount int64, mapCfg huntingMapConfig, rng *rand.Rand) (*dungeonEntity, huntingEnemyTier) {

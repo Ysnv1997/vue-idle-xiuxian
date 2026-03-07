@@ -97,6 +97,12 @@ func (s *AlchemyService) Craft(ctx context.Context, userID uuid.UUID, recipeID s
 	if err := stopMeditationForConflictTx(ctx, tx, userID, "进行炼丹，打坐已自动结束"); err != nil {
 		return nil, err
 	}
+	if err := ensureExplorationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopExplorationForConflictTx(ctx, tx, userID, "进行炼丹，自动探索已结束"); err != nil {
+		return nil, err
+	}
 
 	if err := ensureAlchemyRows(ctx, tx, userID); err != nil {
 		return nil, err

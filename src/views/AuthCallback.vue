@@ -34,10 +34,36 @@
       }
       router.replace('/cultivation')
     } catch (callbackError) {
-      error.value = callbackError?.message || '未知错误'
+      error.value = resolveAuthErrorMessage(callbackError?.message)
       setTimeout(() => {
         router.replace('/')
       }, 1200)
     }
   })
+
+  const resolveAuthErrorMessage = raw => {
+    const reason = String(raw || '').trim()
+    if (!reason) {
+      return '未知错误'
+    }
+    if (reason === 'registration_limit_reached') {
+      return '开放注册人数已满，请持续关注'
+    }
+    if (reason === 'token_exchange_failed') {
+      return '登录失败：OAuth 换取令牌失败'
+    }
+    if (reason === 'fetch_profile_failed') {
+      return '登录失败：获取 LinuxDo 用户信息失败'
+    }
+    if (reason === 'invalid_state' || reason === 'missing_code') {
+      return '登录失败：授权状态已失效，请重试'
+    }
+    if (reason === 'local_login_failed') {
+      return '登录失败：本地账号处理失败'
+    }
+    if (reason.startsWith('oauth_error:')) {
+      return '登录失败：LinuxDo 授权被取消或拒绝'
+    }
+    return reason
+  }
 </script>

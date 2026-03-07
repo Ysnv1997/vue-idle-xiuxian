@@ -14,24 +14,30 @@ import (
 
 // Config 定义后端服务运行时配置（来自环境变量）。
 type Config struct {
-	Env              string
-	HTTPPort         string
-	DatabaseURL      string
-	RedisURL         string
-	MigrationsDir    string
-	JWTSecret        string
-	AccessTokenTTL   time.Duration
-	RefreshTokenTTL  time.Duration
-	OAuthStateTTL    time.Duration
-	AuctionSweepTTL  time.Duration
-	AuctionSweepMax  int
-	HuntingSweepTTL  time.Duration
-	HuntingSweepMax  int
-	ChatCleanupTTL   time.Duration
-	ChatRetentionTTL time.Duration
-	ChatRetentionMax int
-	EnableDevLogin   bool
-	ChatAdminUserIDs []string
+	Env                    string
+	HTTPPort               string
+	DatabaseURL            string
+	RedisURL               string
+	MigrationsDir          string
+	JWTSecret              string
+	AccessTokenTTL         time.Duration
+	RefreshTokenTTL        time.Duration
+	OAuthStateTTL          time.Duration
+	AuctionSweepTTL        time.Duration
+	AuctionSweepMax        int
+	HuntingSweepTTL        time.Duration
+	HuntingSweepMax        int
+	ExplorationSweepTTL    time.Duration
+	ExplorationSweepMax    int
+	ChatCleanupTTL         time.Duration
+	ChatRetentionTTL       time.Duration
+	ChatRetentionMax       int
+	DBLockMonitorEnabled   bool
+	DBLockMonitorInterval  time.Duration
+	DBLockMonitorThreshold time.Duration
+	DBLockMonitorMaxRows   int
+	EnableDevLogin         bool
+	ChatAdminUserIDs       []string
 
 	EnableRechargeMock     bool
 	RechargeCallbackSecret string
@@ -89,7 +95,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	refreshTokenTTL, err := parseDurationSeconds("REFRESH_TOKEN_TTL_SECONDS", 604800)
+	refreshTokenTTL, err := parseDurationSeconds("REFRESH_TOKEN_TTL_SECONDS", 2592000)
 	if err != nil {
 		return Config{}, err
 	}
@@ -113,6 +119,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	explorationSweepTTL, err := parseDurationSeconds("EXPLORATION_SWEEP_INTERVAL_SECONDS", 1)
+	if err != nil {
+		return Config{}, err
+	}
+	explorationSweepMax, err := parsePositiveInt("EXPLORATION_SWEEP_BATCH_SIZE", 200)
+	if err != nil {
+		return Config{}, err
+	}
 	chatCleanupTTL, err := parseDurationSeconds("CHAT_CLEANUP_INTERVAL_SECONDS", 30)
 	if err != nil {
 		return Config{}, err
@@ -125,6 +139,18 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	dbLockMonitorInterval, err := parseDurationSeconds("DB_LOCK_MONITOR_INTERVAL_SECONDS", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	dbLockMonitorThreshold, err := parseDurationSeconds("DB_LOCK_MONITOR_THRESHOLD_SECONDS", 2)
+	if err != nil {
+		return Config{}, err
+	}
+	dbLockMonitorMaxRows, err := parsePositiveInt("DB_LOCK_MONITOR_MAX_ROWS", 20)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg.AccessTokenTTL = accessTokenTTL
 	cfg.RefreshTokenTTL = refreshTokenTTL
@@ -133,9 +159,15 @@ func Load() (Config, error) {
 	cfg.AuctionSweepMax = auctionSweepMax
 	cfg.HuntingSweepTTL = huntingSweepTTL
 	cfg.HuntingSweepMax = huntingSweepMax
+	cfg.ExplorationSweepTTL = explorationSweepTTL
+	cfg.ExplorationSweepMax = explorationSweepMax
 	cfg.ChatCleanupTTL = chatCleanupTTL
 	cfg.ChatRetentionTTL = chatRetentionTTL
 	cfg.ChatRetentionMax = chatRetentionMax
+	cfg.DBLockMonitorEnabled = parseBoolEnv("DB_LOCK_MONITOR_ENABLED", true)
+	cfg.DBLockMonitorInterval = dbLockMonitorInterval
+	cfg.DBLockMonitorThreshold = dbLockMonitorThreshold
+	cfg.DBLockMonitorMaxRows = dbLockMonitorMaxRows
 	cfg.EnableDevLogin = getEnv("ENABLE_DEV_LOGIN", "true") == "true"
 	cfg.EnableRechargeMock = parseBoolEnv("ENABLE_RECHARGE_MOCK", cfg.Env != "production")
 	cfg.ChatAdminUserIDs = parseCSV(getEnv("CHAT_ADMIN_USER_IDS", "76bae928-45c2-409a-b066-44be9ed2952c"))

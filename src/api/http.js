@@ -44,6 +44,51 @@ async function refreshAccessToken() {
   return refreshPromise
 }
 
+function parseJWTExp(token) {
+  const raw = String(token || '').trim()
+  if (!raw) return 0
+  const parts = raw.split('.')
+  if (parts.length < 2) return 0
+  const payloadPart = String(parts[1] || '').trim()
+  if (!payloadPart) return 0
+  try {
+    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+    const payloadJSON = atob(padded)
+    const payload = JSON.parse(payloadJSON)
+    const exp = Number(payload?.exp || 0)
+    if (!Number.isFinite(exp) || exp <= 0) {
+      return 0
+    }
+    return Math.floor(exp)
+  } catch {
+    return 0
+  }
+}
+
+export function accessTokenExpiresInSeconds(token = getAccessToken()) {
+  const exp = parseJWTExp(token)
+  if (!exp) return 0
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  return Math.max(0, exp - nowSeconds)
+}
+
+export async function ensureAccessTokenValid(minTTLSeconds = 120) {
+  const accessToken = getAccessToken()
+  if (accessToken) {
+    const remainSeconds = accessTokenExpiresInSeconds(accessToken)
+    if (remainSeconds > Math.max(0, Math.floor(Number(minTTLSeconds || 0)))) {
+      return true
+    }
+  }
+
+  const refreshed = await refreshAccessToken()
+  if (!refreshed) {
+    return false
+  }
+  return Boolean(getAccessToken())
+}
+
 export async function httpRequest(path, options = {}) {
   const {
     method = 'GET',

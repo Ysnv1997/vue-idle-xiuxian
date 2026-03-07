@@ -66,12 +66,37 @@ func stopHuntingForConflictTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 			last_log_seq = COALESCE(last_log_seq, 0) + 1,
 			last_log_message = $3,
 			ended_at = now(),
-			updated_at = now()
+			updated_at = now(),
+			last_processed_at = now(),
+			failure_count = 0,
+			last_error = ''
 		WHERE user_id = $1
 		  AND is_active = TRUE
 	`
 	if _, err := tx.Exec(ctx, query, userID, huntingRunStateStopped, message); err != nil {
 		return fmt.Errorf("stop hunting for conflict: %w", err)
+	}
+	return nil
+}
+
+func stopExplorationForConflictTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, message string) error {
+	const query = `
+		UPDATE player_exploration_runs
+		SET
+			is_active = FALSE,
+			last_state = $2,
+			last_log_seq = COALESCE(last_log_seq, 0) + 1,
+			last_log_message = $3,
+			ended_at = now(),
+			updated_at = now(),
+			last_processed_at = now(),
+			failure_count = 0,
+			last_error = ''
+		WHERE user_id = $1
+		  AND is_active = TRUE
+	`
+	if _, err := tx.Exec(ctx, query, userID, explorationRunStateStopped, message); err != nil {
+		return fmt.Errorf("stop exploration for conflict: %w", err)
 	}
 	return nil
 }

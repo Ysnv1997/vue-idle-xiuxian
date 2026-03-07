@@ -17,6 +17,7 @@ const (
 	meditationRunStateStopped = "stopped"
 	meditationRunStateFull    = "full"
 	meditationRunStateOffline = "offline_timeout"
+	meditationRunStateSystem  = "system_stopped"
 )
 
 type MeditationStatusResult struct {
@@ -68,24 +69,54 @@ type meditationRunState struct {
 }
 
 func (s *GameService) MeditationStatus(ctx context.Context, userID uuid.UUID) (*MeditationStatusResult, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin meditation status transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	const query = `
+		SELECT
+			COALESCE(pmr.is_active, FALSE),
+			COALESCE(pmr.total_spirit_gain, 0),
+			COALESCE(pmr.last_state, ''),
+			COALESCE(pmr.last_log_seq, 0),
+			COALESCE(pmr.last_log_message, ''),
+			COALESCE(pmr.started_at, to_timestamp(0)),
+			COALESCE(pmr.ended_at, to_timestamp(0)),
+			COALESCE(pmr.updated_at, now()),
+			pp.level,
+			COALESCE(pr.spirit, 0),
+			COALESCE(pr.spirit_rate, 0),
+			COALESCE(pis.active_effects, '[]'::jsonb)
+		FROM player_profiles pp
+		LEFT JOIN player_meditation_runs pmr ON pmr.user_id = pp.user_id
+		LEFT JOIN player_resources pr ON pr.user_id = pp.user_id
+		LEFT JOIN player_inventory_state pis ON pis.user_id = pp.user_id
+		WHERE pp.user_id = $1
+	`
 
-	if err := ensureMeditationRunRow(ctx, tx, userID); err != nil {
-		return nil, err
+	state := &meditationRunState{}
+	if err := s.pool.QueryRow(ctx, query, userID).Scan(
+		&state.RunActive,
+		&state.TotalSpiritGain,
+		&state.LastState,
+		&state.LastLogSeq,
+		&state.LastLogMessage,
+		&state.StartedAt,
+		&state.EndedAt,
+		&state.RunUpdatedAt,
+		&state.Level,
+		&state.Spirit,
+		&state.SpiritRate,
+		&state.ActiveEffectsRaw,
+	); err != nil {
+		if err == pgx.ErrNoRows {
+			return &MeditationStatusResult{
+				IsActive: false,
+				State:    meditationRunStateStopped,
+			}, nil
+		}
+		return nil, fmt.Errorf("query meditation status: %w", err)
 	}
 
-	state, err := loadMeditationRunStateForUpdate(ctx, tx, userID)
-	if err != nil {
-		return nil, err
-	}
 	status := buildMeditationStatus(state, time.Now())
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit meditation status transaction: %w", err)
+	if status.State == "" {
+		status.State = meditationRunStateStopped
 	}
 	return status, nil
 }
@@ -110,6 +141,12 @@ func (s *GameService) MeditationStart(ctx context.Context, userID uuid.UUID) (*M
 	}
 	if huntingActive {
 		return nil, &MeditationConflictError{Conflict: "hunting"}
+	}
+	if err := ensureExplorationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopExplorationForConflictTx(ctx, tx, userID, "开始打坐，自动探索已结束"); err != nil {
+		return nil, err
 	}
 
 	if err := ensureMeditationRunRow(ctx, tx, userID); err != nil {
@@ -414,7 +451,10 @@ func updateMeditationRunTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, sta
 			last_log_message = $6,
 			started_at = $7,
 			ended_at = $8,
-			updated_at = $9
+			updated_at = $9,
+			last_processed_at = $9,
+			failure_count = 0,
+			last_error = ''
 		WHERE user_id = $1
 	`
 
@@ -460,7 +500,10 @@ func stopMeditationForConflictTx(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 			last_log_seq = last_log_seq + 1,
 			last_log_message = $3,
 			ended_at = now(),
-			updated_at = now()
+			updated_at = now(),
+			last_processed_at = now(),
+			failure_count = 0,
+			last_error = ''
 		WHERE user_id = $1
 		  AND is_active = TRUE
 	`

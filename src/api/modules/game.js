@@ -76,6 +76,23 @@ export async function startExploration(locationId) {
   })
 }
 
+export async function getExplorationStatus() {
+  return httpRequest('/game/exploration/status')
+}
+
+export async function startAutoExplorationRun(locationId) {
+  return httpRequest('/game/exploration/auto/start', {
+    method: 'POST',
+    body: { locationId }
+  })
+}
+
+export async function stopAutoExplorationRun() {
+  return httpRequest('/game/exploration/auto/stop', {
+    method: 'POST'
+  })
+}
+
 export async function craftAlchemyPill(recipeId) {
   return httpRequest('/game/alchemy/craft', {
     method: 'POST',

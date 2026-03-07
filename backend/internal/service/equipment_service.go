@@ -16,12 +16,13 @@ import (
 )
 
 type EquipmentService struct {
-	pool     *pgxpool.Pool
-	userRepo *repository.UserRepository
+	pool           *pgxpool.Pool
+	userRepo       *repository.UserRepository
+	realtimeBroker *GameRealtimeBroker
 }
 
-func NewEquipmentService(pool *pgxpool.Pool, userRepo *repository.UserRepository) *EquipmentService {
-	return &EquipmentService{pool: pool, userRepo: userRepo}
+func NewEquipmentService(pool *pgxpool.Pool, userRepo *repository.UserRepository, realtimeBroker *GameRealtimeBroker) *EquipmentService {
+	return &EquipmentService{pool: pool, userRepo: userRepo, realtimeBroker: realtimeBroker}
 }
 
 type EquipmentActionResult struct {
@@ -308,6 +309,9 @@ func (s *EquipmentService) Enhance(ctx context.Context, userID uuid.UUID, itemID
 	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if snapshot != nil && s.realtimeBroker != nil && currentLevel+1 >= 10 {
+		publishWorldAnnouncement(ctx, s.realtimeBroker, buildEnhanceAnnouncement(snapshot.Name, equipmentReadString(item["name"]), currentLevel+1))
 	}
 	return &EquipmentActionResult{
 		Success:  true,

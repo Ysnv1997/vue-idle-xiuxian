@@ -15,20 +15,27 @@ import (
 )
 
 const (
-	RuntimeConfigKeyHuntingWinGainMultiplier    = "gameplay.hunting.win_gain_multiplier"
-	RuntimeConfigKeyHuntingOfflineCapSeconds    = "gameplay.hunting.offline_cap_seconds"
-	RuntimeConfigKeyHuntingReviveMultiplier     = "gameplay.hunting.revive_multiplier"
-	RuntimeConfigKeyHuntingAutoHealBaseRate     = "gameplay.hunting.auto_heal.base_rate"
-	RuntimeConfigKeyHuntingAutoHealCapRate      = "gameplay.hunting.auto_heal.cap_rate"
-	RuntimeConfigKeyHuntingSpiritRefundChance   = "gameplay.hunting.spirit_refund.chance"
-	RuntimeConfigKeyHuntingSpiritRefundMinRatio = "gameplay.hunting.spirit_refund.min_ratio"
-	RuntimeConfigKeyHuntingSpiritRefundMaxRatio = "gameplay.hunting.spirit_refund.max_ratio"
-	RuntimeConfigKeyChatMessageMaxRunes         = "chat.message.max_runes"
-	RuntimeConfigKeyChatSendMinGapMS            = "chat.send.min_gap_ms"
-	RuntimeConfigKeyChatWordCacheTTLSec         = "chat.block_word_cache_ttl_seconds"
-	RuntimeConfigKeyChatAdminMaxMuteMinutes     = "chat.admin.max_mute_minutes"
-	RuntimeConfigKeyChatRetentionSeconds        = "chat.retention.seconds"
-	RuntimeConfigKeyChatRetentionMaxMessages    = "chat.retention.max_messages"
+	RuntimeConfigKeyAuthOpenRegistrationLimit               = "auth.registration.open_limit"
+	RuntimeConfigKeyHuntingWinGainMultiplier                = "gameplay.hunting.win_gain_multiplier"
+	RuntimeConfigKeyHuntingOfflineCapSeconds                = "gameplay.hunting.offline_cap_seconds"
+	RuntimeConfigKeyHuntingReviveMultiplier                 = "gameplay.hunting.revive_multiplier"
+	RuntimeConfigKeyHuntingAutoHealBaseRate                 = "gameplay.hunting.auto_heal.base_rate"
+	RuntimeConfigKeyHuntingAutoHealCapRate                  = "gameplay.hunting.auto_heal.cap_rate"
+	RuntimeConfigKeyHuntingSpiritRefundChance               = "gameplay.hunting.spirit_refund.chance"
+	RuntimeConfigKeyHuntingSpiritRefundMinRatio             = "gameplay.hunting.spirit_refund.min_ratio"
+	RuntimeConfigKeyHuntingSpiritRefundMaxRatio             = "gameplay.hunting.spirit_refund.max_ratio"
+	RuntimeConfigKeyChatMessageMaxRunes                     = "chat.message.max_runes"
+	RuntimeConfigKeyChatSendMinGapMS                        = "chat.send.min_gap_ms"
+	RuntimeConfigKeyChatWordCacheTTLSec                     = "chat.block_word_cache_ttl_seconds"
+	RuntimeConfigKeyChatAdminMaxMuteMinutes                 = "chat.admin.max_mute_minutes"
+	RuntimeConfigKeyChatRetentionSeconds                    = "chat.retention.seconds"
+	RuntimeConfigKeyChatRetentionMaxMessages                = "chat.retention.max_messages"
+	RuntimeConfigKeyWorldAnnouncementEnabled                = "world_announcement.enabled"
+	RuntimeConfigKeyWorldAnnouncementCooldownMS             = "world_announcement.cooldown_ms"
+	RuntimeConfigKeyWorldAnnouncementBlocked                = "world_announcement.blocked_keywords"
+	RuntimeConfigKeyWorldAnnouncementCooldownBreakthroughMS = "world_announcement.cooldown.breakthrough_ms"
+	RuntimeConfigKeyWorldAnnouncementCooldownLootMS         = "world_announcement.cooldown.loot_ms"
+	RuntimeConfigKeyWorldAnnouncementCooldownEnhanceMS      = "world_announcement.cooldown.enhance_ms"
 )
 
 type RuntimeConfigValueType string
@@ -49,6 +56,13 @@ type RuntimeConfigDefinition struct {
 }
 
 var defaultRuntimeConfigDefinitions = []RuntimeConfigDefinition{
+	{
+		Key:         RuntimeConfigKeyAuthOpenRegistrationLimit,
+		Default:     "0",
+		ValueType:   RuntimeConfigTypeInt,
+		Category:    "auth",
+		Description: "开放注册人数上限（0 表示不限制）",
+	},
 	{
 		Key:         RuntimeConfigKeyHuntingWinGainMultiplier,
 		Default:     "2",
@@ -146,6 +160,48 @@ var defaultRuntimeConfigDefinitions = []RuntimeConfigDefinition{
 		ValueType:   RuntimeConfigTypeInt,
 		Category:    "chat",
 		Description: "聊天最多保留消息数",
+	},
+	{
+		Key:         RuntimeConfigKeyWorldAnnouncementEnabled,
+		Default:     "true",
+		ValueType:   RuntimeConfigTypeBool,
+		Category:    "world_announcement",
+		Description: "是否启用世界广告广播",
+	},
+	{
+		Key:         RuntimeConfigKeyWorldAnnouncementCooldownMS,
+		Default:     "3000",
+		ValueType:   RuntimeConfigTypeInt,
+		Category:    "world_announcement",
+		Description: "世界广告最小广播间隔（毫秒）",
+	},
+	{
+		Key:         RuntimeConfigKeyWorldAnnouncementBlocked,
+		Default:     "",
+		ValueType:   RuntimeConfigTypeString,
+		Category:    "world_announcement",
+		Description: "世界广告屏蔽关键词，英文逗号分隔",
+	},
+	{
+		Key:         RuntimeConfigKeyWorldAnnouncementCooldownBreakthroughMS,
+		Default:     "10000",
+		ValueType:   RuntimeConfigTypeInt,
+		Category:    "world_announcement",
+		Description: "突破类世界广告最小广播间隔（毫秒）",
+	},
+	{
+		Key:         RuntimeConfigKeyWorldAnnouncementCooldownLootMS,
+		Default:     "3000",
+		ValueType:   RuntimeConfigTypeInt,
+		Category:    "world_announcement",
+		Description: "稀有掉落类世界广告最小广播间隔（毫秒）",
+	},
+	{
+		Key:         RuntimeConfigKeyWorldAnnouncementCooldownEnhanceMS,
+		Default:     "5000",
+		ValueType:   RuntimeConfigTypeInt,
+		Category:    "world_announcement",
+		Description: "强化类世界广告最小广播间隔（毫秒）",
 	},
 }
 
@@ -668,6 +724,30 @@ func (s *RuntimeConfigService) GetFloat64(ctx context.Context, key string, fallb
 		return clampFloat64(fallback, min, max)
 	}
 	return clampFloat64(parsed, min, max)
+}
+
+func (s *RuntimeConfigService) GetBool(ctx context.Context, key string, fallback bool) bool {
+	value, ok, err := s.getRawValue(ctx, key)
+	if err != nil || !ok {
+		return fallback
+	}
+	parsed, parseErr := strconv.ParseBool(strings.TrimSpace(value))
+	if parseErr != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func (s *RuntimeConfigService) GetString(ctx context.Context, key string, fallback string) string {
+	value, ok, err := s.getRawValue(ctx, key)
+	if err != nil || !ok {
+		return fallback
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	return trimmed
 }
 
 func (s *RuntimeConfigService) getRawValue(ctx context.Context, key string) (string, bool, error) {

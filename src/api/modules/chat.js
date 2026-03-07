@@ -28,6 +28,20 @@ export async function fetchChatAdminMutes(targetLinuxDoUserId = '', limit = 50) 
   return httpRequest(`/chat/admin/mutes?${params.toString()}`)
 }
 
+export async function fetchChatAdminReports(status = 'pending', limit = 100) {
+  const params = new URLSearchParams()
+  params.set('status', String(status || 'pending'))
+  params.set('limit', String(limit))
+  return httpRequest(`/chat/admin/reports?${params.toString()}`)
+}
+
+export async function reviewChatAdminReport(reportId, status, note = '') {
+  return httpRequest('/chat/admin/reports/review', {
+    method: 'POST',
+    body: { reportId, status, note }
+  })
+}
+
 export async function muteChatUser(targetLinuxDoUserId, durationMinutes, reason = '') {
   return httpRequest('/chat/admin/mute', {
     method: 'POST',

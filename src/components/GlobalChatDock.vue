@@ -23,7 +23,12 @@
               <span class="chat-line-content">{{ formatLine(item) }}</span>
               <span class="chat-line-time">{{ formatTime(item.createdAt) }}</span>
             </div>
-            <n-button text size="tiny" class="chat-line-report" @click="reportMessage(item.id)">举报</n-button>
+            <div class="chat-line-actions">
+              <n-button text size="tiny" class="chat-line-report" @click="reportMessage(item.id)">举报</n-button>
+              <n-button v-if="canMuteMessage(item)" text size="tiny" class="chat-line-mute" @click="openMuteDialog(item)">
+                禁言
+              </n-button>
+            </div>
           </div>
         </div>
         <n-empty v-else description="暂无消息" />
@@ -48,6 +53,43 @@
       </div>
     </div>
   </section>
+
+  <n-modal v-model:show="showMuteDialog" preset="dialog" title="管理员禁言" style="width: 460px">
+    <template v-if="muteTarget">
+      <n-space vertical :size="10">
+        <n-descriptions bordered :column="1" size="small">
+          <n-descriptions-item label="目标昵称">
+            {{ muteTarget.senderName || '匿名修士' }}
+          </n-descriptions-item>
+          <n-descriptions-item label="LinuxDo ID">
+            {{ muteTarget.senderLinuxDoUserId }}
+          </n-descriptions-item>
+          <n-descriptions-item label="消息内容">
+            <span class="mute-dialog-content">{{ muteTarget.content || '（空）' }}</span>
+          </n-descriptions-item>
+        </n-descriptions>
+        <div class="mute-dialog-field">
+          <span class="mute-dialog-label">禁言时长</span>
+          <n-select v-model:value="muteDurationMinutes" :options="muteDurationOptions" />
+        </div>
+        <div class="mute-dialog-field">
+          <span class="mute-dialog-label">禁言原因（可选）</span>
+          <n-input
+            v-model:value="muteReason"
+            maxlength="80"
+            placeholder="默认：管理员禁言"
+            show-count
+          />
+        </div>
+      </n-space>
+    </template>
+    <template #action>
+      <n-space justify="end">
+        <n-button :disabled="muteSubmitting" @click="closeMuteDialog">取消</n-button>
+        <n-button type="primary" :loading="muteSubmitting" @click="submitMute">确认禁言</n-button>
+      </n-space>
+    </template>
+  </n-modal>
 </template>
 
 <script setup>
@@ -55,18 +97,35 @@
   import { useDialog, useMessage } from 'naive-ui'
   import { useChatStore } from '../stores/chat'
   import { getAccessToken } from '../api/token-storage'
+  import { useSessionStore } from '../stores/session'
 
   const chatStore = useChatStore()
+  const sessionStore = useSessionStore()
   const message = useMessage()
   const dialog = useDialog()
   const draft = ref('')
   const isCollapsed = ref(false)
   const scrollRef = ref(null)
+  const showMuteDialog = ref(false)
+  const muteSubmitting = ref(false)
+  const muteReason = ref('')
+  const muteDurationMinutes = ref(5)
+  const muteTarget = ref(null)
 
   const messages = computed(() => (Array.isArray(chatStore.messages) ? chatStore.messages : []))
+  const canModerateChat = computed(() => Boolean(sessionStore.user?.canModerateChat))
+  const myLinuxDoUserId = computed(() => String(sessionStore.user?.linuxDoUserId || '').trim())
   const canSend = computed(() => {
     return chatStore.connected && !chatStore.muteStatus?.muted && draft.value.trim().length > 0
   })
+  const muteDurationOptions = [
+    { label: '5 分钟', value: 5 },
+    { label: '30 分钟', value: 30 },
+    { label: '60 分钟', value: 60 },
+    { label: '3 小时', value: 180 },
+    { label: '12 小时', value: 720 },
+    { label: '24 小时', value: 1440 }
+  ]
 
   const formatTime = value => {
     if (!value) return '--:--:--'
@@ -79,6 +138,16 @@
     const sender = String(item?.senderName || '匿名修士').trim() || '匿名修士'
     const content = String(item?.content || '').trim()
     return `${sender}说：${content || '...'}`
+  }
+
+  const resolveSenderLinuxDoUserId = item => String(item?.senderLinuxDoUserId || '').trim()
+
+  const canMuteMessage = item => {
+    if (!canModerateChat.value) return false
+    const senderLinuxDoUserId = resolveSenderLinuxDoUserId(item)
+    if (!senderLinuxDoUserId) return false
+    if (senderLinuxDoUserId === myLinuxDoUserId.value) return false
+    return true
   }
 
   const scrollToBottom = () => {
@@ -146,6 +215,59 @@
         }
       }
     })
+  }
+
+  const openMuteDialog = item => {
+    if (!canMuteMessage(item)) {
+      message.warning('该消息发送者暂不可禁言')
+      return
+    }
+    muteTarget.value = {
+      id: item?.id || 0,
+      senderName: String(item?.senderName || '').trim(),
+      senderLinuxDoUserId: resolveSenderLinuxDoUserId(item),
+      content: String(item?.content || '').trim()
+    }
+    muteDurationMinutes.value = 5
+    muteReason.value = ''
+    showMuteDialog.value = true
+  }
+
+  const closeMuteDialog = () => {
+    showMuteDialog.value = false
+    muteSubmitting.value = false
+    muteReason.value = ''
+    muteDurationMinutes.value = 5
+    muteTarget.value = null
+  }
+
+  const submitMute = async () => {
+    if (!canModerateChat.value) {
+      message.error('当前角色无聊天管理权限')
+      return
+    }
+    const targetLinuxDoUserId = String(muteTarget.value?.senderLinuxDoUserId || '').trim()
+    if (!targetLinuxDoUserId) {
+      message.warning('目标 LinuxDo ID 缺失，无法禁言')
+      return
+    }
+    const durationMinutes = Math.max(1, Math.floor(Number(muteDurationMinutes.value || 0)))
+    if (!durationMinutes) {
+      message.warning('请选择有效禁言时长')
+      return
+    }
+
+    muteSubmitting.value = true
+    try {
+      const result = await chatStore.adminMute(targetLinuxDoUserId, durationMinutes, muteReason.value.trim())
+      message.success(result?.message || '禁言成功')
+      closeMuteDialog()
+      await chatStore.loadAdminMutes({ targetLinuxDoUserId, limit: 20, silentForbidden: true }).catch(() => {})
+    } catch (error) {
+      message.error(error?.message || '禁言失败')
+    } finally {
+      muteSubmitting.value = false
+    }
   }
 
   onMounted(async () => {
@@ -271,6 +393,17 @@
     flex-shrink: 0;
   }
 
+  .chat-line-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .chat-line-mute {
+    color: #d03050;
+  }
+
   .chat-compose {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -299,6 +432,23 @@
 
   .chat-error {
     color: #d03050;
+  }
+
+  .mute-dialog-content {
+    color: var(--ink-main);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .mute-dialog-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .mute-dialog-label {
+    font-size: 12px;
+    color: var(--ink-sub);
   }
 
   @media (max-width: 768px) {

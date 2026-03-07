@@ -137,6 +137,7 @@
                   <p>品质：{{ item.qualityInfo ? item.qualityInfo.name : petRarities[item.rarity]?.name || '未知' }}</p>
                   <p v-if="equipmentTypes2.includes(item.type)">类型：{{ equipmentTypes[item.equipType]?.name }}</p>
                   <p v-else-if="item.type === 'pet'">{{ item.description || '暂无描述' }}</p>
+                  <p v-else>{{ item.description || '本次未获得奖励' }}</p>
                 </div>
               </div>
               <template #footer>
@@ -195,15 +196,15 @@
                         class="prob-item"
                       >
                         <div class="prob-label">
-                          <span :style="{ color: equipmentQualities[quality].color }">
-                            {{ equipmentQualities[quality].name }}
+                          <span :style="{ color: equipmentQualities[quality]?.color || noneProbabilityMeta.color }">
+                            {{ equipmentQualities[quality]?.name || noneProbabilityMeta.name }}
                           </span>
                         </div>
                         <n-progress
                           type="line"
                           :percentage="probability * 100"
                           indicator-placement="inside"
-                          :color="equipmentQualities[quality].color"
+                          :color="equipmentQualities[quality]?.color || noneProbabilityMeta.color"
                           :height="20"
                           :border-radius="4"
                           :show-indicator="true"
@@ -221,15 +222,15 @@
                         class="prob-item"
                       >
                         <div class="prob-label">
-                          <span :style="{ color: petRarities[rarity].color }">
-                            {{ petRarities[rarity].name }}
+                          <span :style="{ color: petRarities[rarity]?.color || noneProbabilityMeta.color }">
+                            {{ petRarities[rarity]?.name || noneProbabilityMeta.name }}
                           </span>
                         </div>
                         <n-progress
                           type="line"
                           :percentage="probability * 100"
                           :indicator-placement="'inside'"
-                          :color="petRarities[rarity].color"
+                          :color="petRarities[rarity]?.color || noneProbabilityMeta.color"
                           :height="20"
                           :border-radius="4"
                           :show-indicator="true"
@@ -251,15 +252,15 @@
                       class="prob-item"
                     >
                       <div class="prob-label">
-                        <span :style="{ color: equipmentQualities[quality].color }">
-                          {{ equipmentQualities[quality].name }}
+                        <span :style="{ color: equipmentQualities[quality]?.color || noneProbabilityMeta.color }">
+                          {{ equipmentQualities[quality]?.name || noneProbabilityMeta.name }}
                         </span>
                       </div>
                       <n-progress
                         type="line"
                         :percentage="probability * 100"
                         :indicator-placement="'inside'"
-                        :color="equipmentQualities[quality].color"
+                        :color="equipmentQualities[quality]?.color || noneProbabilityMeta.color"
                         :height="20"
                         :border-radius="4"
                         :class="{
@@ -279,8 +280,8 @@
                   <div class="probability-bars">
                     <div v-for="(probability, rarity) in getAdjustedPetProbabilities()" :key="rarity" class="prob-item">
                       <div class="prob-label">
-                        <span :style="{ color: petRarities[rarity].color }">
-                          {{ petRarities[rarity].name }}
+                        <span :style="{ color: petRarities[rarity]?.color || noneProbabilityMeta.color }">
+                          {{ petRarities[rarity]?.name || noneProbabilityMeta.name }}
                         </span>
                       </div>
                       <n-progress
@@ -290,7 +291,7 @@
                         :class="{
                           'wish-bonus': playerStore.wishlistEnabled && playerStore.selectedWishPetRarity === rarity
                         }"
-                        :color="petRarities[rarity].color"
+                        :color="petRarities[rarity]?.color || noneProbabilityMeta.color"
                         :height="20"
                         :border-radius="4"
                         :show-indicator="true"
@@ -495,43 +496,43 @@
     divine: {
       name: '神品',
       color: '#FF0000',
-      probability: 0.002,
+      probability: 0.0003,
       essenceBonus: 50
     },
     celestial: {
       name: '仙品',
       color: '#FFD700',
-      probability: 0.0581,
+      probability: 0.0012,
       essenceBonus: 30
     },
     mystic: {
       name: '玄品',
       color: '#9932CC',
-      probability: 0.1601,
+      probability: 0.02,
       essenceBonus: 20
     },
     spiritual: {
       name: '灵品',
       color: '#1E90FF',
-      probability: 0.2801,
+      probability: 0.1,
       essenceBonus: 10
     },
     mortal: {
       name: '凡品',
       color: '#32CD32',
-      probability: 0.4997,
+      probability: 0.23,
       essenceBonus: 5
     }
   }
 
   // 根据境界调整装备品质概率
   const getEquipProbabilities = {
-    common: 0.5, // 凡品 50%
-    uncommon: 0.3, // 下品 30%
-    rare: 0.12, // 中品 12%
-    epic: 0.05, // 上品 5%
-    legendary: 0.02, // 极品 2%
-    mythic: 0.01 // 仙品 1%
+    common: 0.38,
+    uncommon: 0.24,
+    rare: 0.08,
+    epic: 0.015,
+    legendary: 0.0015,
+    mythic: 0.0005
   }
 
   // 根据心愿单调整装备概率
@@ -553,6 +554,7 @@
         }
       })
     }
+    baseProbs.none = 1 - Object.values(baseProbs).reduce((sum, prob) => sum + prob, 0)
     return baseProbs
   }
 
@@ -579,6 +581,7 @@
         }
       })
     }
+    baseProbs.none = 1 - Object.values(baseProbs).reduce((sum, prob) => sum + prob, 0)
     return baseProbs
   }
 
@@ -597,10 +600,18 @@
     Object.entries(petRarities).forEach(([rarity, config]) => {
       adjustedPetProbs[rarity] = config.probability * totalPetProb
     })
+    adjustedEquipProbs.none = (1 - Object.values(equipProbs).reduce((sum, prob) => sum + prob, 0)) * totalEquipProb
+    adjustedPetProbs.none =
+      (1 - Object.values(petRarities).reduce((sum, config) => sum + config.probability, 0)) * totalPetProb
     return {
       equipment: adjustedEquipProbs,
       pet: adjustedPetProbs
     }
+  }
+
+  const noneProbabilityMeta = {
+    name: '谢谢参与',
+    color: '#6b7280'
   }
 
   const gachaNumber = ref(1)
@@ -676,11 +687,14 @@
   const filteredResults = computed(() => {
     if (!gachaResult.value) return []
     return gachaResult.value.filter(item => {
+      if (item.type === 'none') {
+        return selectedQuality.value === 'all' && selectedRarity.value === 'all'
+      }
       if (item.type === 'pet') {
-        return !selectedRarity.value || item.rarity === selectedRarity.value
+        return selectedRarity.value === 'all' || !selectedRarity.value || item.rarity === selectedRarity.value
       }
       // 装备筛选
-      return !selectedQuality.value || item.quality === selectedQuality.value
+      return selectedQuality.value === 'all' || !selectedQuality.value || item.quality === selectedQuality.value
     })
   })
 

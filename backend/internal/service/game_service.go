@@ -177,6 +177,13 @@ func (s *GameService) Breakthrough(ctx context.Context, userID uuid.UUID) (*Cult
 	if err != nil {
 		return nil, err
 	}
+	if snapshot != nil {
+		for _, realmName := range majorRealmTransitionsBetween(state.Level-1, state.Level) {
+			if s.realtimeBroker != nil {
+				publishWorldAnnouncement(ctx, s.realtimeBroker, buildMajorRealmBreakthroughAnnouncement(snapshot.Name, realmName))
+			}
+		}
+	}
 
 	return &CultivationActionResult{
 		SpiritCost:      0,
@@ -260,6 +267,12 @@ func (s *GameService) HuntOnce(ctx context.Context, userID uuid.UUID, mapID stri
 		return nil, err
 	}
 	if err := stopMeditationForConflictTx(ctx, tx, userID, "进行刷怪，打坐已自动结束"); err != nil {
+		return nil, err
+	}
+	if err := ensureExplorationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	if err := stopExplorationForConflictTx(ctx, tx, userID, "进行刷怪，自动探索已结束"); err != nil {
 		return nil, err
 	}
 

@@ -34,12 +34,12 @@ type gachaPetTemplate struct {
 var gachaEquipmentQualityOrder = []string{"common", "uncommon", "rare", "epic", "legendary", "mythic"}
 
 var gachaEquipmentQualities = map[string]gachaEquipmentQuality{
-	"common":    {Name: "凡品", Color: "#9e9e9e", StatMod: 1.0, Probability: 0.5},
-	"uncommon":  {Name: "下品", Color: "#4caf50", StatMod: 1.2, Probability: 0.3},
-	"rare":      {Name: "中品", Color: "#2196f3", StatMod: 1.5, Probability: 0.12},
-	"epic":      {Name: "上品", Color: "#9c27b0", StatMod: 2.0, Probability: 0.05},
-	"legendary": {Name: "极品", Color: "#ff9800", StatMod: 2.5, Probability: 0.02},
-	"mythic":    {Name: "仙品", Color: "#e91e63", StatMod: 3.0, Probability: 0.01},
+	"common":    {Name: "凡品", Color: "#9e9e9e", StatMod: 1.0, Probability: 0.38},
+	"uncommon":  {Name: "下品", Color: "#4caf50", StatMod: 1.2, Probability: 0.24},
+	"rare":      {Name: "中品", Color: "#2196f3", StatMod: 1.5, Probability: 0.08},
+	"epic":      {Name: "上品", Color: "#9c27b0", StatMod: 2.0, Probability: 0.015},
+	"legendary": {Name: "极品", Color: "#ff9800", StatMod: 2.5, Probability: 0.0015},
+	"mythic":    {Name: "仙品", Color: "#e91e63", StatMod: 3.0, Probability: 0.0005},
 }
 
 var gachaEquipmentTypes = []gachaEquipmentType{
@@ -129,11 +129,11 @@ var gachaEquipmentBaseStats = map[string]map[string]gachaStatRange{
 var gachaPetRarityOrder = []string{"divine", "celestial", "mystic", "spiritual", "mortal"}
 
 var gachaPetRarities = map[string]gachaPetRarity{
-	"divine":    {Name: "神品", Color: "#FF0000", Probability: 0.002, EssenceBonus: 50},
-	"celestial": {Name: "仙品", Color: "#FFD700", Probability: 0.0581, EssenceBonus: 30},
-	"mystic":    {Name: "玄品", Color: "#9932CC", Probability: 0.1601, EssenceBonus: 20},
-	"spiritual": {Name: "灵品", Color: "#1E90FF", Probability: 0.2801, EssenceBonus: 10},
-	"mortal":    {Name: "凡品", Color: "#32CD32", Probability: 0.4997, EssenceBonus: 5},
+	"divine":    {Name: "神品", Color: "#FF0000", Probability: 0.0003, EssenceBonus: 50},
+	"celestial": {Name: "仙品", Color: "#FFD700", Probability: 0.0012, EssenceBonus: 30},
+	"mystic":    {Name: "玄品", Color: "#9932CC", Probability: 0.02, EssenceBonus: 20},
+	"spiritual": {Name: "灵品", Color: "#1E90FF", Probability: 0.10, EssenceBonus: 10},
+	"mortal":    {Name: "凡品", Color: "#32CD32", Probability: 0.23, EssenceBonus: 5},
 }
 
 var gachaPetPool = map[string][]gachaPetTemplate{

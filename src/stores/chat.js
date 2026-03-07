@@ -11,6 +11,7 @@ import {
   upsertChatBlockedWord,
   unmuteChatUser
 } from '../api/modules/chat'
+import { ensureAccessTokenValid } from '../api/http'
 import { getAccessToken } from '../api/token-storage'
 
 export const useChatStore = defineStore('chat', {
@@ -64,17 +65,22 @@ export const useChatStore = defineStore('chat', {
 
       return this.muteStatus
     },
-    connect() {
+    async connect() {
       if (this.ws || this.connecting) return
-
-      const accessToken = getAccessToken()
-      if (!accessToken) {
-        this.lastError = '请先登录后再连接聊天'
-        return
-      }
 
       this.connecting = true
       this.lastError = ''
+      const valid = await ensureAccessTokenValid(90)
+      if (!this.connecting) {
+        return
+      }
+      const accessToken = getAccessToken()
+      if (!valid || !accessToken) {
+        this.connecting = false
+        this.connected = false
+        this.lastError = '登录状态已过期，请重新登录'
+        return
+      }
       const ws = new WebSocket(buildChatWSURL(accessToken))
 
       ws.onopen = () => {

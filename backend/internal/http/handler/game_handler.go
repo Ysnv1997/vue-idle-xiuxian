@@ -258,6 +258,21 @@ type explorationStartRequest struct {
 	LocationID string `json:"locationId"`
 }
 
+func (h *GameHandler) ExplorationStatus(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.explorationService.ExplorationStatus(c.Request.Context(), userID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *GameHandler) ExplorationStart(c *gin.Context) {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {
@@ -272,6 +287,48 @@ func (h *GameHandler) ExplorationStart(c *gin.Context) {
 	}
 
 	result, err := h.explorationService.Start(c.Request.Context(), userID, req.LocationID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+
+	h.respondWithAchievementSync(c, userID, result)
+}
+
+type explorationAutoStartRequest struct {
+	LocationID string `json:"locationId"`
+}
+
+func (h *GameHandler) ExplorationAutoStart(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req explorationAutoStartRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.LocationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "locationId is required"})
+		return
+	}
+
+	result, err := h.explorationService.ExplorationAutoStart(c.Request.Context(), userID, req.LocationID)
+	if err != nil {
+		h.handleGameError(c, err)
+		return
+	}
+
+	h.respondWithAchievementSync(c, userID, result)
+}
+
+func (h *GameHandler) ExplorationAutoStop(c *gin.Context) {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	result, err := h.explorationService.ExplorationAutoStop(c.Request.Context(), userID)
 	if err != nil {
 		h.handleGameError(c, err)
 		return
@@ -738,7 +795,7 @@ func (h *GameHandler) respondWithAchievementSync(c *gin.Context, userID uuid.UUI
 	}
 
 	if h.realtimeBroker != nil {
-		h.realtimeBroker.Publish(userID, service.GameRealtimeTopicSnapshot)
+		h.realtimeBroker.Publish(userID, service.GameRealtimeTopicAll)
 	}
 
 	c.JSON(http.StatusOK, merged)

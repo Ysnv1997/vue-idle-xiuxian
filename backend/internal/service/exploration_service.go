@@ -15,12 +15,21 @@ import (
 )
 
 type ExplorationService struct {
-	pool     *pgxpool.Pool
-	userRepo *repository.UserRepository
+	pool           *pgxpool.Pool
+	userRepo       *repository.UserRepository
+	realtimeBroker *GameRealtimeBroker
 }
 
-func NewExplorationService(pool *pgxpool.Pool, userRepo *repository.UserRepository) *ExplorationService {
-	return &ExplorationService{pool: pool, userRepo: userRepo}
+func NewExplorationService(
+	pool *pgxpool.Pool,
+	userRepo *repository.UserRepository,
+	realtimeBroker *GameRealtimeBroker,
+) *ExplorationService {
+	return &ExplorationService{
+		pool:           pool,
+		userRepo:       userRepo,
+		realtimeBroker: realtimeBroker,
+	}
 }
 
 type ExplorationActionResult struct {
@@ -84,6 +93,16 @@ func (s *ExplorationService) Start(ctx context.Context, userID uuid.UUID, locati
 	if err := ensureExplorationRows(ctx, tx, userID); err != nil {
 		return nil, err
 	}
+	if err := ensureExplorationRunRow(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+	runState, err := loadExplorationRunStateForUpdate(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if runState.RunActive {
+		return nil, &ActivityConflictError{Conflict: "exploration"}
+	}
 
 	state, err := loadExplorationState(ctx, tx, userID)
 	if err != nil {
@@ -98,39 +117,8 @@ func (s *ExplorationService) Start(ctx context.Context, userID uuid.UUID, locati
 		return nil, &InsufficientSpiritError{Required: float64(location.SpiritCost), Current: state.Spirit}
 	}
 
-	state.Spirit -= float64(location.SpiritCost)
-	state.ExplorationCount++
-
-	result := &ExplorationActionResult{
-		LocationID:       location.ID,
-		LocationName:     location.Name,
-		SpiritCost:       location.SpiritCost,
-		RewardMultiplier: 1,
-		Messages:         make([]string, 0, 6),
-	}
-
-	if shouldTriggerExplorationEvent(state.Luck) {
-		event := rollExplorationEvent()
-		if event != nil {
-			result.EventTriggered = true
-			result.EventName = event.Name
-			state.EventTriggered++
-			result.Messages = append(result.Messages, fmt.Sprintf("[%s]%s", event.Name, event.Description))
-			applyExplorationEventEffect(state, event, result)
-		}
-	} else {
-		rewardMultiplier := calculateExplorationRewardMultiplier(state.Luck)
-		result.RewardMultiplier = rewardMultiplier
-		rewardRule := rollLocationReward(location.Rewards)
-		if rewardRule != nil {
-			amount := randomAmount(rewardRule.MinAmount, rewardRule.MaxAmount)
-			if rewardMultiplier > 1 {
-				amount = int64(math.Floor(float64(amount) * rewardMultiplier))
-				result.Messages = append(result.Messages, "福缘加持，获得了更多奖励！")
-			}
-			applyExplorationReward(state, rewardRule.RewardType, amount, result)
-		}
-	}
+	previousLevel := state.Level
+	result := applyExplorationRound(state, location)
 
 	if err := persistExplorationState(ctx, tx, userID, state); err != nil {
 		return nil, err
@@ -139,13 +127,32 @@ func (s *ExplorationService) Start(ctx context.Context, userID uuid.UUID, locati
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit exploration transaction: %w", err)
 	}
+	s.notifyRealtime(userID, GameRealtimeTopicExploration, GameRealtimeTopicSnapshot, GameRealtimeTopicMeditation, GameRealtimeTopicHunting)
 
 	snapshot, err := s.userRepo.GetSnapshot(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+	if snapshot != nil && s.realtimeBroker != nil {
+		for _, realmName := range majorRealmTransitionsBetween(previousLevel, state.Level) {
+			publishWorldAnnouncement(ctx, s.realtimeBroker, buildMajorRealmBreakthroughAnnouncement(snapshot.Name, realmName))
+		}
+	}
 	result.Snapshot = snapshot
 	return result, nil
+}
+
+func (s *ExplorationService) notifyRealtime(userID uuid.UUID, topics ...string) {
+	if s == nil || s.realtimeBroker == nil {
+		return
+	}
+	if len(topics) == 0 {
+		s.realtimeBroker.Publish(userID, GameRealtimeTopicAll)
+		return
+	}
+	for _, topic := range topics {
+		s.realtimeBroker.Publish(userID, topic)
+	}
 }
 
 type explorationState struct {
@@ -461,6 +468,46 @@ func applyExplorationReward(state *explorationState, rewardType string, amount i
 			result.Messages = append(result.Messages, fmt.Sprintf("[丹方获取]获得%s的丹方残页", recipe.Name))
 		}
 	}
+}
+
+func applyExplorationRound(state *explorationState, location explorationLocation) *ExplorationActionResult {
+	state.Spirit -= float64(location.SpiritCost)
+	state.ExplorationCount++
+
+	result := &ExplorationActionResult{
+		LocationID:       location.ID,
+		LocationName:     location.Name,
+		SpiritCost:       location.SpiritCost,
+		RewardMultiplier: 1,
+		Messages:         make([]string, 0, 6),
+	}
+
+	if shouldTriggerExplorationEvent(state.Luck) {
+		event := rollExplorationEvent()
+		if event != nil {
+			result.EventTriggered = true
+			result.EventName = event.Name
+			state.EventTriggered++
+			result.Messages = append(result.Messages, fmt.Sprintf("[%s]%s", event.Name, event.Description))
+			applyExplorationEventEffect(state, event, result)
+		}
+		return result
+	}
+
+	rewardMultiplier := calculateExplorationRewardMultiplier(state.Luck)
+	result.RewardMultiplier = rewardMultiplier
+	rewardRule := rollLocationReward(location.Rewards)
+	if rewardRule == nil {
+		return result
+	}
+
+	amount := randomAmount(rewardRule.MinAmount, rewardRule.MaxAmount)
+	if rewardMultiplier > 1 {
+		amount = int64(math.Floor(float64(amount) * rewardMultiplier))
+		result.Messages = append(result.Messages, "福缘加持，获得了更多奖励！")
+	}
+	applyExplorationReward(state, rewardRule.RewardType, amount, result)
+	return result
 }
 
 func applyBreakthroughForExploration(state *explorationState) bool {

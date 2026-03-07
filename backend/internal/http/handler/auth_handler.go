@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -168,6 +169,11 @@ func (h *AuthHandler) LinuxDoCallback(c *gin.Context) {
 
 	result, err := h.authService.LoginByLinuxDoUser(c.Request.Context(), profile.UserID, profile.Username, profile.Avatar)
 	if err != nil {
+		var registrationLimitErr *service.RegistrationLimitReachedError
+		if errors.As(err, &registrationLimitErr) {
+			h.redirectOAuthFailure(c, c.Query("state"), "registration_limit_reached")
+			return
+		}
 		h.redirectOAuthFailure(c, c.Query("state"), "local_login_failed")
 		return
 	}

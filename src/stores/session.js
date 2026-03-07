@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { API_BASE_URL, AUTO_DEV_LOGIN } from '../config/features'
 import { devLogin, fetchMe, logout } from '../api/modules/auth'
+import { ensureAccessTokenValid } from '../api/http'
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '../api/token-storage'
 
 export const useSessionStore = defineStore('session', {
@@ -8,7 +9,9 @@ export const useSessionStore = defineStore('session', {
     accessToken: '',
     refreshToken: '',
     user: null,
-    loading: false
+    loading: false,
+    tokenHeartbeatTimer: null,
+    tokenHeartbeatIntervalMs: 5 * 60 * 1000
   }),
   getters: {
     isAuthenticated(state) {
@@ -20,7 +23,42 @@ export const useSessionStore = defineStore('session', {
       this.accessToken = getAccessToken()
       this.refreshToken = getRefreshToken()
     },
+    startTokenHeartbeat() {
+      if (this.tokenHeartbeatTimer || typeof window === 'undefined') {
+        return
+      }
+      this.tokenHeartbeatTimer = window.setInterval(() => {
+        this.keepSessionAlive({ silent: true })
+      }, this.tokenHeartbeatIntervalMs)
+    },
+    stopTokenHeartbeat() {
+      if (!this.tokenHeartbeatTimer || typeof window === 'undefined') {
+        return
+      }
+      window.clearInterval(this.tokenHeartbeatTimer)
+      this.tokenHeartbeatTimer = null
+    },
+    async keepSessionAlive({ silent = true } = {}) {
+      if (!this.accessToken && !this.refreshToken) {
+        return false
+      }
+      try {
+        const ok = await ensureAccessTokenValid(20 * 60)
+        this.hydrateTokens()
+        if (!ok) {
+          this.clearSession()
+          return false
+        }
+        return true
+      } catch (error) {
+        if (!silent) {
+          throw error
+        }
+        return false
+      }
+    },
     clearSession() {
+      this.stopTokenHeartbeat()
       clearTokens()
       this.accessToken = ''
       this.refreshToken = ''
@@ -28,6 +66,10 @@ export const useSessionStore = defineStore('session', {
     },
     async initializeSession() {
       this.hydrateTokens()
+      if (!this.accessToken && this.refreshToken) {
+        await ensureAccessTokenValid(60)
+        this.hydrateTokens()
+      }
       if (!this.accessToken && AUTO_DEV_LOGIN) {
         await this.loginAsDev()
       }
@@ -39,6 +81,7 @@ export const useSessionStore = defineStore('session', {
       this.loading = true
       try {
         this.user = await fetchMe()
+        this.startTokenHeartbeat()
       } catch (error) {
         this.clearSession()
         throw error
@@ -52,6 +95,7 @@ export const useSessionStore = defineStore('session', {
         await devLogin(payload)
         this.hydrateTokens()
         this.user = await fetchMe()
+        this.startTokenHeartbeat()
       } finally {
         this.loading = false
       }
@@ -80,6 +124,7 @@ export const useSessionStore = defineStore('session', {
       this.loading = true
       try {
         this.user = await fetchMe()
+        this.startTokenHeartbeat()
       } catch (consumeError) {
         this.clearSession()
         throw consumeError

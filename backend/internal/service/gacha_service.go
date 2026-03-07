@@ -16,12 +16,13 @@ import (
 )
 
 type GachaService struct {
-	pool     *pgxpool.Pool
-	userRepo *repository.UserRepository
+	pool           *pgxpool.Pool
+	userRepo       *repository.UserRepository
+	realtimeBroker *GameRealtimeBroker
 }
 
-func NewGachaService(pool *pgxpool.Pool, userRepo *repository.UserRepository) *GachaService {
-	return &GachaService{pool: pool, userRepo: userRepo}
+func NewGachaService(pool *pgxpool.Pool, userRepo *repository.UserRepository, realtimeBroker *GameRealtimeBroker) *GachaService {
+	return &GachaService{pool: pool, userRepo: userRepo, realtimeBroker: realtimeBroker}
 }
 
 type GachaDrawInput struct {
@@ -146,6 +147,9 @@ func (s *GachaService) Draw(ctx context.Context, userID uuid.UUID, input GachaDr
 		result.Results = append(result.Results, drawItem)
 
 		itemType := gachaReadString(drawItem["type"])
+		if itemType == "none" {
+			continue
+		}
 		if itemType == "pet" {
 			rarity := gachaReadString(drawItem["rarity"])
 			if rarityConfig, ok := gachaPetRarities[rarity]; ok {
@@ -185,8 +189,35 @@ func (s *GachaService) Draw(ctx context.Context, userID uuid.UUID, input GachaDr
 	if err != nil {
 		return nil, err
 	}
+	if snapshot != nil && s.realtimeBroker != nil {
+		for _, drawItem := range result.Results {
+			itemType := gachaReadString(drawItem["type"])
+			switch itemType {
+			case "pet":
+				rarity := gachaReadString(drawItem["rarity"])
+				if shouldAnnounceRarePetRarity(rarity) {
+					rarityName := gachaReadNestedString(drawItem, "rarityInfo", "name")
+					publishWorldAnnouncement(ctx, s.realtimeBroker, buildRareLootAnnouncement(snapshot.Name, gachaReadString(drawItem["name"]), rarityName, "灵宠"))
+				}
+			default:
+				quality := gachaReadString(drawItem["quality"])
+				if shouldAnnounceRareEquipmentQuality(quality) {
+					qualityName := gachaReadNestedString(drawItem, "qualityInfo", "name")
+					publishWorldAnnouncement(ctx, s.realtimeBroker, buildRareLootAnnouncement(snapshot.Name, gachaReadString(drawItem["name"]), qualityName, "装备"))
+				}
+			}
+		}
+	}
 	result.Snapshot = snapshot
 	return result, nil
+}
+
+func gachaReadNestedString(item map[string]any, parentKey string, childKey string) string {
+	parent, ok := item[parentKey].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return gachaReadString(parent[childKey])
 }
 
 func ensureGachaRows(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
@@ -283,13 +314,16 @@ func gachaDrawSingleEquipment(level int, input GachaDrawInput) map[string]any {
 	probabilities := gachaAdjustedEquipmentProbabilities(input.WishlistEnabled, input.SelectedWishEquipQuality)
 	r := rand.Float64()
 	accumulated := 0.0
-	quality := "common"
+	quality := ""
 	for _, q := range gachaEquipmentQualityOrder {
 		accumulated += probabilities[q]
 		if r <= accumulated {
 			quality = q
 			break
 		}
+	}
+	if quality == "" {
+		return gachaGenerateNoReward("equipment")
 	}
 	return gachaGenerateEquipment(level, quality)
 }
@@ -298,13 +332,16 @@ func gachaDrawSinglePet(input GachaDrawInput) map[string]any {
 	probabilities := gachaAdjustedPetProbabilities(input.WishlistEnabled, input.SelectedWishPetRarity)
 	r := rand.Float64()
 	accumulated := 0.0
-	rarity := "mortal"
+	rarity := ""
 	for _, key := range gachaPetRarityOrder {
 		accumulated += probabilities[key]
 		if r <= accumulated {
 			rarity = key
 			break
 		}
+	}
+	if rarity == "" {
+		return gachaGenerateNoReward("pet")
 	}
 	return gachaGeneratePet(rarity)
 }
@@ -484,6 +521,27 @@ func gachaGeneratePet(rarity string) map[string]any {
 		"rarityInfo": map[string]any{
 			"name":  rarityCfg.Name,
 			"color": rarityCfg.Color,
+		},
+	}
+}
+
+func gachaGenerateNoReward(pool string) map[string]any {
+	label := "谢谢参与"
+	if pool == "equipment" {
+		label = "宝匣空空，谢谢参与"
+	}
+	if pool == "pet" {
+		label = "灵蛋沉寂，谢谢参与"
+	}
+	return map[string]any{
+		"id":          fmt.Sprintf("none_%s_%d_%d", pool, time.Now().UnixMilli(), rand.Int63n(1000000)),
+		"type":        "none",
+		"pool":        pool,
+		"name":        label,
+		"description": "本次未获得任何奖励",
+		"qualityInfo": map[string]any{
+			"name":  "未中奖",
+			"color": "#6b7280",
 		},
 	}
 }

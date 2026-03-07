@@ -213,6 +213,134 @@
           <n-divider />
 
           <n-space vertical>
+            <n-text depth="3">聊天禁言管理（聊天管理/超管）</n-text>
+
+            <n-space align="end">
+              <n-input v-model:value="chatMuteTargetLinuxDoUserId" placeholder="目标 LinuxDo 用户 ID" style="min-width: 220px" />
+              <n-select
+                v-model:value="chatMuteDurationMinutes"
+                :options="chatMuteDurationOptions"
+                placeholder="禁言时长"
+                style="min-width: 130px"
+              />
+              <n-input v-model:value="chatMuteReason" placeholder="禁言原因（可选）" style="min-width: 220px" />
+              <n-button type="warning" :loading="chatModerationSubmitting" @click="submitChatMute">执行禁言</n-button>
+              <n-button type="default" :loading="chatModerationSubmitting" @click="submitChatUnmute(chatMuteTargetLinuxDoUserId)">
+                按输入解禁
+              </n-button>
+              <n-button :loading="chatMuteListLoading" @click="loadChatAdminMutes">刷新禁言列表</n-button>
+            </n-space>
+
+            <n-spin :show="chatMuteListLoading">
+              <n-table striped size="small">
+                <thead>
+                  <tr>
+                    <th style="width: 150px">目标用户ID</th>
+                    <th style="width: 140px">目标昵称</th>
+                    <th style="width: 170px">禁言到期</th>
+                    <th>原因</th>
+                    <th style="width: 150px">操作人</th>
+                    <th style="width: 90px">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in chatActiveMutes" :key="item.id">
+                    <td>{{ item.targetLinuxDoUserId || '-' }}</td>
+                    <td>{{ item.targetName || '-' }}</td>
+                    <td>{{ formatTime(item.mutedUntil) }}</td>
+                    <td>{{ item.reason || '-' }}</td>
+                    <td>{{ item.createdByLinuxDoUserId || '-' }}</td>
+                    <td>
+                      <n-button size="tiny" tertiary :loading="chatModerationSubmitting" @click="submitChatUnmute(item.targetLinuxDoUserId)">
+                        解禁
+                      </n-button>
+                    </td>
+                  </tr>
+                  <tr v-if="chatActiveMutes.length === 0">
+                    <td colspan="6">
+                      <n-empty description="暂无生效中的禁言记录" />
+                    </td>
+                  </tr>
+                </tbody>
+              </n-table>
+            </n-spin>
+
+            <n-divider />
+
+            <n-text depth="3">聊天举报审核（聊天管理/超管）</n-text>
+
+            <n-space align="end">
+              <n-select
+                v-model:value="chatReportFilterStatus"
+                :options="chatReportStatusOptions"
+                placeholder="审核状态"
+                style="min-width: 140px"
+              />
+              <n-input v-model:value="chatReportReviewNote" placeholder="审核备注（可选）" style="min-width: 260px" />
+              <n-button :loading="chatReportLoading" @click="loadChatReports">刷新举报列表</n-button>
+            </n-space>
+
+            <n-spin :show="chatReportLoading">
+              <n-table striped size="small">
+                <thead>
+                  <tr>
+                    <th style="width: 80px">ID</th>
+                    <th style="width: 140px">举报人</th>
+                    <th style="width: 140px">被举报人</th>
+                    <th>消息内容</th>
+                    <th style="width: 100px">举报原因</th>
+                    <th style="width: 85px">状态</th>
+                    <th style="width: 140px">审核人</th>
+                    <th style="width: 170px">举报时间</th>
+                    <th style="width: 140px">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in chatReports" :key="item.id">
+                    <td>#{{ item.id }}</td>
+                    <td>{{ item.reporterName || item.reporterLinuxDoUserId || '-' }}</td>
+                    <td>{{ item.messageSenderName || item.messageSenderLinuxDoUserId || '-' }}</td>
+                    <td>{{ item.messageContent || '-' }}</td>
+                    <td>{{ item.reason || '-' }}</td>
+                    <td>{{ formatChatReportStatus(item.reviewStatus) }}</td>
+                    <td>{{ item.reviewedByLinuxDoUserId || '-' }}</td>
+                    <td>{{ formatTime(item.createdAt) }}</td>
+                    <td>
+                      <n-space>
+                        <n-button
+                          size="tiny"
+                          tertiary
+                          type="success"
+                          :disabled="item.reviewStatus === 'approved'"
+                          :loading="chatModerationSubmitting"
+                          @click="reviewChatReport(item.id, 'approved')"
+                        >
+                          通过
+                        </n-button>
+                        <n-button
+                          size="tiny"
+                          tertiary
+                          type="error"
+                          :disabled="item.reviewStatus === 'rejected'"
+                          :loading="chatModerationSubmitting"
+                          @click="reviewChatReport(item.id, 'rejected')"
+                        >
+                          驳回
+                        </n-button>
+                      </n-space>
+                    </td>
+                  </tr>
+                  <tr v-if="chatReports.length === 0">
+                    <td colspan="9">
+                      <n-empty description="暂无举报记录" />
+                    </td>
+                  </tr>
+                </tbody>
+              </n-table>
+            </n-spin>
+
+            <n-divider />
+
             <n-text depth="3">聊天违禁词配置（聊天管理/超管）</n-text>
 
             <n-space align="end">
@@ -290,7 +418,16 @@
   import { computed, onMounted, ref } from 'vue'
   import { useDialog, useMessage } from 'naive-ui'
   import { useRouter } from 'vue-router'
-  import { deleteChatBlockedWord, fetchChatBlockedWords, upsertChatBlockedWord } from '../api/modules/chat'
+  import {
+    deleteChatBlockedWord,
+    fetchChatAdminMutes,
+    fetchChatAdminReports,
+    fetchChatBlockedWords,
+    muteChatUser,
+    reviewChatAdminReport,
+    unmuteChatUser,
+    upsertChatBlockedWord
+  } from '../api/modules/chat'
   import {
     fetchAdminUsers,
     fetchRuntimeConfigAudits,
@@ -316,6 +453,16 @@
   const chatBlockedWordLoading = ref(false)
   const chatBlockedWordSubmitting = ref(false)
   const chatBlockedWords = ref([])
+  const chatMuteListLoading = ref(false)
+  const chatReportLoading = ref(false)
+  const chatModerationSubmitting = ref(false)
+  const chatActiveMutes = ref([])
+  const chatReports = ref([])
+  const chatMuteTargetLinuxDoUserId = ref('')
+  const chatMuteDurationMinutes = ref(60)
+  const chatMuteReason = ref('')
+  const chatReportFilterStatus = ref('pending')
+  const chatReportReviewNote = ref('')
   const adminBlockedWord = ref('')
   const adminBlockedWordEnabled = ref(true)
   const runtimeAuditLoading = ref(false)
@@ -340,6 +487,20 @@
   const blockedWordStatusOptions = [
     { label: '启用', value: true },
     { label: '停用', value: false }
+  ]
+  const chatReportStatusOptions = [
+    { label: '待审核', value: 'pending' },
+    { label: '已通过', value: 'approved' },
+    { label: '已驳回', value: 'rejected' },
+    { label: '全部', value: 'all' }
+  ]
+  const chatMuteDurationOptions = [
+    { label: '10分钟', value: 10 },
+    { label: '30分钟', value: 30 },
+    { label: '1小时', value: 60 },
+    { label: '6小时', value: 360 },
+    { label: '24小时', value: 1440 },
+    { label: '72小时', value: 4320 }
   ]
   const adminRoleOptions = [
     { label: '超管', value: 'super_admin' },
@@ -480,6 +641,110 @@
       message.error(error?.message || '加载违禁词失败')
     } finally {
       chatBlockedWordLoading.value = false
+    }
+  }
+
+  const loadChatAdminMutes = async () => {
+    if (!canModerateChat.value) {
+      chatActiveMutes.value = []
+      return
+    }
+    chatMuteListLoading.value = true
+    try {
+      const result = await fetchChatAdminMutes('', 200)
+      chatActiveMutes.value = Array.isArray(result?.mutes) ? result.mutes : []
+    } catch (error) {
+      message.error(error?.message || '加载禁言列表失败')
+    } finally {
+      chatMuteListLoading.value = false
+    }
+  }
+
+  const loadChatReports = async () => {
+    if (!canModerateChat.value) {
+      chatReports.value = []
+      return
+    }
+    chatReportLoading.value = true
+    try {
+      const result = await fetchChatAdminReports(chatReportFilterStatus.value, 200)
+      chatReports.value = Array.isArray(result?.reports) ? result.reports : []
+    } catch (error) {
+      message.error(error?.message || '加载举报列表失败')
+    } finally {
+      chatReportLoading.value = false
+    }
+  }
+
+  const submitChatMute = async () => {
+    if (!canModerateChat.value) {
+      message.error('当前角色无聊天管理权限')
+      return
+    }
+    const targetLinuxDoUserId = chatMuteTargetLinuxDoUserId.value.trim()
+    if (!targetLinuxDoUserId) {
+      message.warning('请输入目标 LinuxDo 用户 ID')
+      return
+    }
+    const durationMinutes = Math.max(1, Math.floor(Number(chatMuteDurationMinutes.value || 0)))
+    if (durationMinutes <= 0) {
+      message.warning('禁言时长必须大于 0')
+      return
+    }
+
+    chatModerationSubmitting.value = true
+    try {
+      const result = await muteChatUser(targetLinuxDoUserId, durationMinutes, chatMuteReason.value.trim())
+      message.success(result?.message || '禁言成功')
+      await Promise.all([loadChatAdminMutes(), loadChatReports()])
+    } catch (error) {
+      message.error(error?.message || '禁言失败')
+    } finally {
+      chatModerationSubmitting.value = false
+    }
+  }
+
+  const submitChatUnmute = async targetLinuxDoUserIdRaw => {
+    if (!canModerateChat.value) {
+      message.error('当前角色无聊天管理权限')
+      return
+    }
+    const targetLinuxDoUserId = String(targetLinuxDoUserIdRaw || '').trim()
+    if (!targetLinuxDoUserId) {
+      message.warning('请输入目标 LinuxDo 用户 ID')
+      return
+    }
+
+    chatModerationSubmitting.value = true
+    try {
+      const result = await unmuteChatUser(targetLinuxDoUserId)
+      if (result?.updated) {
+        message.success(result?.message || '解除禁言成功')
+      } else {
+        message.warning('目标当前未被禁言')
+      }
+      await Promise.all([loadChatAdminMutes(), loadChatReports()])
+    } catch (error) {
+      message.error(error?.message || '解除禁言失败')
+    } finally {
+      chatModerationSubmitting.value = false
+    }
+  }
+
+  const reviewChatReport = async (reportId, status) => {
+    if (!canModerateChat.value) {
+      message.error('当前角色无聊天管理权限')
+      return
+    }
+    chatModerationSubmitting.value = true
+    try {
+      await reviewChatAdminReport(reportId, status, chatReportReviewNote.value.trim())
+      message.success('举报审核已更新')
+      await loadChatReports()
+    } catch (error) {
+      message.error(error?.message || '举报审核失败')
+    } finally {
+      chatModerationSubmitting.value = false
     }
   }
 
@@ -676,6 +941,13 @@
     return value || '-'
   }
 
+  const formatChatReportStatus = status => {
+    const value = String(status || '').trim().toLowerCase()
+    if (value === 'approved') return '已通过'
+    if (value === 'rejected') return '已驳回'
+    return '待审核'
+  }
+
   onMounted(async () => {
     const tasks = []
     if (canManageAdmins.value) {
@@ -685,7 +957,7 @@
       tasks.push(loadRuntimeConfigs(), loadRuntimeConfigAudits())
     }
     if (canModerateChat.value) {
-      tasks.push(loadChatBlockedWords())
+      tasks.push(loadChatBlockedWords(), loadChatAdminMutes(), loadChatReports())
     }
     if (tasks.length > 0) {
       await Promise.all(tasks)

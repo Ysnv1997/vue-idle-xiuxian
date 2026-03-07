@@ -198,6 +198,14 @@
                 </div>
               </n-layout-content>
             </n-layout>
+            <transition name="world-banner">
+              <div v-if="activeWorldAnnouncement" class="world-announcement-layer">
+                <div class="world-announcement-track" :class="worldAnnouncementCategoryClass">
+                  <span class="world-announcement-badge">天道传音</span>
+                  <span class="world-announcement-text">{{ activeWorldAnnouncement.message }}</span>
+                </div>
+              </div>
+            </transition>
             <global-chat-dock v-if="showGlobalChatDock" />
           </template>
           <main v-else class="auth-shell">
@@ -264,6 +272,20 @@
   })
   const showGameShell = computed(() => sessionStore.isAuthenticated)
   const showGlobalChatDock = computed(() => showGameShell.value && !isLoading.value)
+  const activeWorldAnnouncement = computed(() => gameRealtimeStore.activeWorldAnnouncement)
+  const worldAnnouncementCategoryClass = computed(() => {
+    const category = activeWorldAnnouncement.value?.category
+    switch (category) {
+      case 'breakthrough':
+        return 'is-breakthrough'
+      case 'enhance':
+        return 'is-enhance'
+      case 'loot':
+        return 'is-loot'
+      default:
+        return ''
+    }
+  })
   const titleActivity = computed(() => {
     if (!sessionStore.isAuthenticated) {
       return '未登录'
@@ -282,6 +304,12 @@
     const meditationRun = gameRealtimeStore.meditationRun
     if (meditationRun?.isActive) {
       return '正在打坐'
+    }
+
+    const explorationRun = gameRealtimeStore.explorationRun
+    if (explorationRun?.isActive) {
+      const locationName = String(explorationRun.locationName || explorationRun.locationId || '').trim()
+      return locationName ? `正在${locationName}探索` : '正在探索'
     }
 
     const currentPath = String(route.path || '')
@@ -856,6 +884,94 @@
     background-color: rgba(255, 255, 255, 0.28);
   }
 
+  .world-announcement-layer {
+    position: fixed;
+    top: 84px;
+    left: 0;
+    right: 0;
+    z-index: 2200;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .world-announcement-track {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 22px;
+    min-width: max-content;
+    border: 1px solid rgba(255, 214, 102, 0.55);
+    border-radius: 999px;
+    background: linear-gradient(90deg, rgba(24, 26, 44, 0.95), rgba(79, 45, 18, 0.92));
+    box-shadow: 0 16px 30px rgba(0, 0, 0, 0.28);
+    animation: world-banner-scroll 9s linear forwards;
+  }
+
+  .world-announcement-track.is-breakthrough {
+    border-color: rgba(136, 207, 255, 0.58);
+    background: linear-gradient(90deg, rgba(14, 38, 68, 0.96), rgba(24, 103, 162, 0.9));
+    box-shadow: 0 18px 36px rgba(30, 95, 168, 0.24);
+  }
+
+  .world-announcement-track.is-loot {
+    border-color: rgba(255, 212, 92, 0.62);
+    background: linear-gradient(90deg, rgba(63, 28, 10, 0.97), rgba(140, 76, 19, 0.9));
+    box-shadow: 0 18px 36px rgba(180, 113, 23, 0.22);
+  }
+
+  .world-announcement-track.is-enhance {
+    border-color: rgba(255, 121, 121, 0.58);
+    background: linear-gradient(90deg, rgba(55, 10, 24, 0.97), rgba(138, 28, 56, 0.9));
+    box-shadow: 0 18px 36px rgba(176, 31, 68, 0.24);
+  }
+
+  .world-announcement-badge {
+    color: #ffe29a;
+    font-size: 12px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .world-announcement-track.is-breakthrough .world-announcement-badge {
+    color: #bde7ff;
+  }
+
+  .world-announcement-track.is-loot .world-announcement-badge {
+    color: #ffe4a3;
+  }
+
+  .world-announcement-track.is-enhance .world-announcement-badge {
+    color: #ffd1da;
+  }
+
+  .world-announcement-text {
+    color: #fff7e1;
+    font-size: 16px;
+    font-weight: 700;
+    white-space: nowrap;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  }
+
+  .world-banner-enter-active,
+  .world-banner-leave-active {
+    transition: opacity 0.2s ease;
+  }
+
+  .world-banner-enter-from,
+  .world-banner-leave-to {
+    opacity: 0;
+  }
+
+  @keyframes world-banner-scroll {
+    from {
+      transform: translateX(100vw);
+    }
+    to {
+      transform: translateX(calc(-100% - 32px));
+    }
+  }
+
   @media (max-width: 1280px) {
     .workspace {
       grid-template-columns: 320px minmax(0, 1fr);
@@ -915,6 +1031,18 @@
 
     .quick-grid {
       grid-template-columns: 1fr;
+    }
+
+    .world-announcement-layer {
+      top: 72px;
+    }
+
+    .world-announcement-track {
+      padding: 10px 16px;
+    }
+
+    .world-announcement-text {
+      font-size: 14px;
     }
   }
 

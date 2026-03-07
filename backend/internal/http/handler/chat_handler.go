@@ -204,6 +204,61 @@ func (h *ChatHandler) AdminMutes(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *ChatHandler) AdminReports(c *gin.Context) {
+	_, _, ok := h.requireChatAdmin(c)
+	if !ok {
+		return
+	}
+
+	status := strings.TrimSpace(c.DefaultQuery("status", "pending"))
+	limit := 100
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+			return
+		}
+		limit = parsed
+	}
+
+	result, err := h.chatService.ListReports(c.Request.Context(), status, limit)
+	if err != nil {
+		h.handleChatError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+type chatAdminReviewReportRequest struct {
+	ReportID int64  `json:"reportId"`
+	Status   string `json:"status"`
+	Note     string `json:"note"`
+}
+
+func (h *ChatHandler) AdminReviewReport(c *gin.Context) {
+	operatorUserID, _, ok := h.requireChatAdmin(c)
+	if !ok {
+		return
+	}
+
+	var req chatAdminReviewReportRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.ReportID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reportId is required"})
+		return
+	}
+	if strings.TrimSpace(req.Status) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status is required"})
+		return
+	}
+
+	if err := h.chatService.ReviewReport(c.Request.Context(), req.ReportID, req.Status, req.Note, operatorUserID); err != nil {
+		h.handleChatError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "举报审核已更新"})
+}
+
 func (h *ChatHandler) AdminBlockWords(c *gin.Context) {
 	_, _, ok := h.requireChatAdmin(c)
 	if !ok {
@@ -506,6 +561,24 @@ func (h *ChatHandler) handleChatError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":  "invalid blocked word",
 			"reason": invalidBlockedWordErr.Reason,
+		})
+		return
+	}
+
+	var reportNotFoundErr *service.ChatReportNotFoundError
+	if errors.As(err, &reportNotFoundErr) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":    "chat report not found",
+			"reportId": reportNotFoundErr.ReportID,
+		})
+		return
+	}
+
+	var invalidReviewStatusErr *service.InvalidChatReportReviewStatusError
+	if errors.As(err, &invalidReviewStatusErr) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "invalid chat report review status",
+			"status": invalidReviewStatusErr.Status,
 		})
 		return
 	}

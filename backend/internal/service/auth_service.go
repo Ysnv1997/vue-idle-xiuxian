@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -10,8 +11,9 @@ import (
 )
 
 type AuthService struct {
-	users  *repository.UserRepository
-	tokens *TokenService
+	users         *repository.UserRepository
+	tokens        *TokenService
+	runtimeConfig *RuntimeConfigService
 }
 
 type LoginResult struct {
@@ -19,13 +21,38 @@ type LoginResult struct {
 	TokenPair TokenPair        `json:"token"`
 }
 
-func NewAuthService(users *repository.UserRepository, tokens *TokenService) *AuthService {
-	return &AuthService{users: users, tokens: tokens}
+type RegistrationLimitReachedError struct {
+	Limit   int
+	Current int
+}
+
+func (e *RegistrationLimitReachedError) Error() string {
+	return fmt.Sprintf("open registration limit reached: current=%d limit=%d", e.Current, e.Limit)
+}
+
+func NewAuthService(
+	users *repository.UserRepository,
+	tokens *TokenService,
+	runtimeConfig *RuntimeConfigService,
+) *AuthService {
+	return &AuthService{
+		users:         users,
+		tokens:        tokens,
+		runtimeConfig: runtimeConfig,
+	}
 }
 
 func (s *AuthService) LoginByLinuxDoUser(ctx context.Context, linuxDoUserID, username, avatar string) (LoginResult, error) {
-	user, err := s.users.UpsertLinuxDoUser(ctx, linuxDoUserID, username, avatar)
+	registrationLimit := s.getOpenRegistrationLimit(ctx)
+	user, err := s.users.UpsertLinuxDoUserWithRegistrationLimit(ctx, linuxDoUserID, username, avatar, registrationLimit)
 	if err != nil {
+		var limitErr *repository.UserRegistrationLimitReachedError
+		if errors.As(err, &limitErr) {
+			return LoginResult{}, &RegistrationLimitReachedError{
+				Limit:   limitErr.Limit,
+				Current: limitErr.Current,
+			}
+		}
 		return LoginResult{}, fmt.Errorf("upsert linux do user: %w", err)
 	}
 
@@ -35,6 +62,13 @@ func (s *AuthService) LoginByLinuxDoUser(ctx context.Context, linuxDoUserID, use
 	}
 
 	return LoginResult{User: user, TokenPair: tokenPair}, nil
+}
+
+func (s *AuthService) getOpenRegistrationLimit(ctx context.Context) int {
+	if s == nil || s.runtimeConfig == nil {
+		return 0
+	}
+	return s.runtimeConfig.GetInt(ctx, RuntimeConfigKeyAuthOpenRegistrationLimit, 0, 0, 100000000)
 }
 
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (TokenPair, error) {

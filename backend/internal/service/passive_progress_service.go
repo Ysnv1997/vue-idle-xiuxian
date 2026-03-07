@@ -3,13 +3,15 @@ package service
 import (
 	"context"
 	"fmt"
-	"math"
+	"log"
 	"math/rand"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/kowming/vue-idle-xiuxian/backend/internal/repository"
 )
 
 const (
@@ -19,13 +21,15 @@ const (
 
 type PassiveProgressService struct {
 	pool           *pgxpool.Pool
+	userRepo       *repository.UserRepository
 	runtimeConfig  *RuntimeConfigService
 	realtimeBroker *GameRealtimeBroker
 }
 
-func NewPassiveProgressService(pool *pgxpool.Pool, runtimeConfig *RuntimeConfigService, realtimeBroker *GameRealtimeBroker) *PassiveProgressService {
+func NewPassiveProgressService(pool *pgxpool.Pool, userRepo *repository.UserRepository, runtimeConfig *RuntimeConfigService, realtimeBroker *GameRealtimeBroker) *PassiveProgressService {
 	return &PassiveProgressService{
 		pool:           pool,
+		userRepo:       userRepo,
 		runtimeConfig:  runtimeConfig,
 		realtimeBroker: realtimeBroker,
 	}
@@ -46,6 +50,7 @@ func (s *PassiveProgressService) Advance(ctx context.Context, userID uuid.UUID) 
 	if err != nil {
 		return err
 	}
+	previousHuntingLevel := huntingState.Level
 
 	if huntingState.RunActive {
 		huntingGainMultiplier := s.getHuntingWinGainMultiplier(ctx)
@@ -104,11 +109,46 @@ func (s *PassiveProgressService) Advance(ctx context.Context, userID uuid.UUID) 
 		}
 	}
 
+	if err := touchPassiveRunsProcessedAtTx(ctx, tx, userID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit passive progress transaction: %w", err)
 	}
+	if s.userRepo != nil && huntingState.Level > previousHuntingLevel {
+		snapshot, snapErr := s.userRepo.GetSnapshot(ctx, userID)
+		if snapErr == nil && snapshot != nil && s.realtimeBroker != nil {
+			for _, realmName := range majorRealmTransitionsBetween(previousHuntingLevel, huntingState.Level) {
+				publishWorldAnnouncement(ctx, s.realtimeBroker, buildMajorRealmBreakthroughAnnouncement(snapshot.Name, realmName))
+			}
+		}
+	}
 	if s.realtimeBroker != nil {
 		s.realtimeBroker.Publish(userID, GameRealtimeTopicAll)
+	}
+	return nil
+}
+
+func touchPassiveRunsProcessedAtTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	const huntingQuery = `
+		UPDATE player_hunting_runs
+		SET last_processed_at = now()
+		WHERE user_id = $1
+		  AND is_active = TRUE
+	`
+	if _, err := tx.Exec(ctx, huntingQuery, userID); err != nil {
+		return fmt.Errorf("touch hunting last processed at: %w", err)
+	}
+
+	const meditationQuery = `
+		UPDATE player_meditation_runs
+		SET last_processed_at = now()
+		WHERE user_id = $1
+		  AND is_active = TRUE
+	`
+	if _, err := tx.Exec(ctx, meditationQuery, userID); err != nil {
+		return fmt.Errorf("touch meditation last processed at: %w", err)
 	}
 	return nil
 }
@@ -137,21 +177,21 @@ func (s *PassiveProgressService) AdvanceActiveRuns(ctx context.Context, limit in
 	const query = `
 		SELECT user_id
 		FROM (
-			SELECT user_id, MAX(updated_at) AS updated_at
+			SELECT user_id, MIN(last_processed_at) AS last_processed_at
 			FROM (
-				SELECT user_id, updated_at
+				SELECT user_id, last_processed_at
 				FROM player_hunting_runs
 				WHERE is_active = TRUE
 
 				UNION ALL
 
-				SELECT user_id, updated_at
+				SELECT user_id, last_processed_at
 				FROM player_meditation_runs
 				WHERE is_active = TRUE
 			) active_sources
 			GROUP BY user_id
 		) active_runs
-		ORDER BY updated_at ASC
+		ORDER BY last_processed_at ASC
 		LIMIT $1
 	`
 
@@ -175,12 +215,91 @@ func (s *PassiveProgressService) AdvanceActiveRuns(ctx context.Context, limit in
 
 	processed := 0
 	for _, userID := range userIDs {
-		if err := s.Advance(ctx, userID); err != nil {
-			return processed, fmt.Errorf("advance active hunting run user %s: %w", userID, err)
+		advanceCtx, cancel := context.WithTimeout(ctx, sweepPerUserAdvanceTimeout)
+		err := wrapSweepUserAdvance(func() error {
+			return s.Advance(advanceCtx, userID)
+		})
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return processed, ctx.Err()
+			}
+			if isSweepSkippableError(err) {
+				log.Printf("hunting sweep skip user=%s err=%v", userID.String(), err)
+				_ = s.markAdvanceFailure(context.Background(), userID, err)
+				continue
+			}
+			log.Printf("hunting sweep isolate user=%s err=%v", userID.String(), err)
+			_ = s.markAdvanceFailure(context.Background(), userID, err)
+			continue
 		}
 		processed++
 	}
 	return processed, nil
+}
+
+func (s *PassiveProgressService) markAdvanceFailure(ctx context.Context, userID uuid.UUID, advanceErr error) error {
+	if s == nil || s.pool == nil {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	message := trimSweepError(advanceErr)
+	if message == "" {
+		message = "unknown sweep error"
+	}
+	logMessage := fmt.Sprintf("系统保护性暂停：%s", message)
+
+	const updateHuntingSQL = `
+		UPDATE player_hunting_runs
+		SET
+			failure_count = failure_count + 1,
+			last_error = $2,
+			last_processed_at = now(),
+			last_log_seq = CASE WHEN failure_count + 1 >= $3 AND is_active THEN COALESCE(last_log_seq, 0) + 1 ELSE last_log_seq END,
+			last_log_message = CASE WHEN failure_count + 1 >= $3 AND is_active THEN $4 ELSE last_log_message END,
+			last_state = CASE WHEN failure_count + 1 >= $3 AND is_active THEN $5 ELSE last_state END,
+			is_active = CASE WHEN failure_count + 1 >= $3 THEN FALSE ELSE is_active END,
+			ended_at = CASE WHEN failure_count + 1 >= $3 THEN now() ELSE ended_at END,
+			updated_at = now(),
+			revive_until = CASE WHEN failure_count + 1 >= $3 THEN NULL ELSE revive_until END
+		WHERE user_id = $1
+		  AND is_active = TRUE
+	`
+	if _, err := tx.Exec(ctx, updateHuntingSQL, userID, message, sweepFailureStopThreshold, logMessage, huntingRunStateSystem); err != nil {
+		return fmt.Errorf("mark hunting advance failure: %w", err)
+	}
+
+	const updateMeditationSQL = `
+		UPDATE player_meditation_runs
+		SET
+			failure_count = failure_count + 1,
+			last_error = $2,
+			last_processed_at = now(),
+			last_log_seq = CASE WHEN failure_count + 1 >= $3 AND is_active THEN COALESCE(last_log_seq, 0) + 1 ELSE last_log_seq END,
+			last_log_message = CASE WHEN failure_count + 1 >= $3 AND is_active THEN $4 ELSE last_log_message END,
+			last_state = CASE WHEN failure_count + 1 >= $3 AND is_active THEN $5 ELSE last_state END,
+			is_active = CASE WHEN failure_count + 1 >= $3 THEN FALSE ELSE is_active END,
+			ended_at = CASE WHEN failure_count + 1 >= $3 THEN now() ELSE ended_at END,
+			updated_at = now()
+		WHERE user_id = $1
+		  AND is_active = TRUE
+	`
+	if _, err := tx.Exec(ctx, updateMeditationSQL, userID, message, sweepFailureStopThreshold, logMessage, meditationRunStateSystem); err != nil {
+		return fmt.Errorf("mark meditation advance failure: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit advance failure marker: %w", err)
+	}
+	if s.realtimeBroker != nil {
+		s.realtimeBroker.Publish(userID, GameRealtimeTopicAll)
+	}
+	return nil
 }
 
 func (s *PassiveProgressService) getHuntingWinGainMultiplier(ctx context.Context) float64 {
@@ -330,7 +449,6 @@ func advanceHuntingRunByElapsedTx(
 
 	itemsChanged := false
 	herbsChanged := false
-	player := buildHuntingPlayerEntity(state, effectBonus)
 	rng := rand.New(rand.NewSource(now.UnixNano() + state.KillCount + int64(state.Level)))
 
 	runState := huntingRunStateRunning
@@ -358,6 +476,7 @@ func advanceHuntingRunByElapsedTx(
 				break
 			}
 
+			player := buildHuntingPlayerEntity(state, effectBonus)
 			player.CurrentHealth = player.Stats.MaxHealth
 			state.CurrentHP = player.CurrentHealth
 			state.MaxHP = player.Stats.MaxHealth
@@ -373,111 +492,43 @@ func advanceHuntingRunByElapsedTx(
 			break
 		}
 
-		mapBaseGain := fixedHuntingMapBaseGain(targetMap)
-		spiritCost := fixedHuntingMapSpiritCost(targetMap)
-		if state.Spirit < float64(spiritCost) {
-			runActive = false
-			runState = huntingRunStateExhausted
-			state.LastState = huntingRunStateExhausted
-			state.ReviveUntil = time.Time{}
-			state.RunUpdatedAt = nextEncounterAt
-			setHuntingRunLog(state, "灵力耗尽，刷怪暂停")
-			break
+		outcome, nextItems, nextHerbs, err := resolveHuntingEncounter(state, targetMap, items, herbs, huntingEncounterConfig{
+			OccurredAt:       nextEncounterAt,
+			GainMultiplier:   huntingGainMultiplier,
+			ReviveMultiplier: reviveMultiplier,
+			HealBaseRate:     healBaseRate,
+			HealCapRate:      healCapRate,
+			RefundChance:     refundChance,
+			RefundMinRatio:   refundMinRatio,
+			RefundMaxRatio:   refundMaxRatio,
+			EffectBonus:      effectBonus,
+			RNG:              rng,
+		})
+		if err != nil {
+			return err
 		}
-
-		state.Spirit -= float64(spiritCost)
-		state.TotalSpiritCost += spiritCost
-		stateDirty = true
-		state.RunUpdatedAt = nextEncounterAt
-
-		enemy, tier := generateHuntingEnemy(state.Level, state.KillCount, targetMap, rng)
-		battleState := runHuntingAutoBattle(player, enemy, rng)
-		if battleState == huntingBattleStateTimeout {
-			state.CurrentHP = player.CurrentHealth
-			state.MaxHP = player.Stats.MaxHealth
-			state.LastState = huntingRunStateRunning
-			state.ReviveUntil = time.Time{}
-			setHuntingRunLog(state, fmt.Sprintf("与%s缠斗未分胜负，继续周旋", enemy.Name))
-			continue
+		items = nextItems
+		herbs = nextHerbs
+		if outcome.PersistChanged {
+			stateDirty = true
 		}
-		if battleState != dungeonBattleStateVictory {
-			player.CurrentHealth = 0
-			state.CurrentHP = 0
-			state.MaxHP = player.Stats.MaxHealth
-			state.LastState = huntingRunStateReviving
-			reviveDuration := resolveHuntingReviveDuration(
-				huntingReviveDuration(state.Level, targetMap),
-				reviveMultiplier,
-			)
-			state.ReviveUntil = nextEncounterAt.Add(reviveDuration)
-			reviveSeconds := int64(reviveDuration / time.Second)
-			if reviveSeconds < 1 {
-				reviveSeconds = 1
-			}
-			setHuntingRunLog(state, fmt.Sprintf("你已战死，%d秒后自动复活", reviveSeconds))
-			continue
+		if outcome.CultivationGain > 0 {
+			cultivationTimes++
 		}
-
-		cultivationGain := int64(math.Ceil(float64(mapBaseGain) * huntingGainMultiplier * tier.GainMultiplier))
-		if cultivationGain <= 0 {
-			cultivationGain = 1
+		if outcome.BreakthroughTimes > 0 {
+			breakthroughTimes += outcome.BreakthroughTimes
 		}
-
-		if shouldDoubleGain(state.Luck) {
-			cultivationGain *= 2
-		}
-
-		effectiveCultivationRate := state.CultivationRate * (1 + effectBonus.CultivationRateBonus)
-		cultivationGain = applyCultivationRate(cultivationGain, effectiveCultivationRate)
-
-		state.Cultivation += cultivationGain
-		state.TotalCultivationGain += cultivationGain
-		state.KillCount += 1
-		cultivationTimes += 1
-
-		if state.Cultivation >= state.MaxCultivation {
-			cultivationStateView := buildCultivationStateFromHunting(state)
-			if applyBreakthrough(cultivationStateView) {
-				breakthroughTimes += 1
-			}
-			applyCultivationStateToHunting(state, cultivationStateView)
-		}
-
-		totalRecoverRate := resolveHuntingHealRate(healBaseRate, healCapRate, effectBonus.AutoHealRate)
-		if totalRecoverRate > 0 {
-			dungeonHeal(player, player.Stats.MaxHealth*totalRecoverRate)
-		}
-
-		spiritRefund := rollHuntingSpiritRefund(spiritCost, refundChance, refundMinRatio, refundMaxRatio, rng)
-		if spiritRefund > 0 {
-			state.Spirit += float64(spiritRefund)
-		}
-
-		if dropped, ok := maybeHuntingDropEquipment(state.Level, targetMap, tier, rng); ok {
-			items = append(items, dropped)
+		if outcome.ItemsChanged {
 			itemsChanged = true
 		}
-		herbDropped := herbItem{}
-		hasHerbDrop := false
-		if droppedHerb, ok := maybeHuntingDropHerb(targetMap, tier, rng); ok {
-			herbs = append(herbs, droppedHerb)
+		if outcome.HerbsChanged {
 			herbsChanged = true
-			herbDropped = droppedHerb
-			hasHerbDrop = true
 		}
-
-		state.CurrentHP = player.CurrentHealth
-		state.MaxHP = player.Stats.MaxHealth
-		state.LastState = huntingRunStateRunning
-		state.ReviveUntil = time.Time{}
-		logMessage := fmt.Sprintf("你击杀了%s，获得%d修为", enemy.Name, cultivationGain)
-		if spiritRefund > 0 {
-			logMessage = fmt.Sprintf("%s，返还%d灵力", logMessage, spiritRefund)
+		if outcome.State == huntingRunStateExhausted {
+			runActive = false
+			runState = huntingRunStateExhausted
+			break
 		}
-		if hasHerbDrop {
-			logMessage = fmt.Sprintf("%s，并采得灵草%s", logMessage, herbDropped.Name)
-		}
-		setHuntingRunLog(state, logMessage)
 	}
 
 	if runActive && forceStopByOffline {
@@ -511,13 +562,17 @@ func advanceHuntingRunByElapsedTx(
 	}
 
 	state.RunActive = runActive
-	state.CurrentHP = player.CurrentHealth
-	state.MaxHP = player.Stats.MaxHealth
 	if runActive {
-		return updateActiveHuntingRunTx(ctx, tx, userID, state)
+		if err := updateActiveHuntingRunTx(ctx, tx, userID, state); err != nil {
+			return err
+		}
+	} else {
+		if err := stopHuntingRunWithStateTx(ctx, tx, userID, state, runState, now); err != nil {
+			return err
+		}
 	}
 
-	return stopHuntingRunWithStateTx(ctx, tx, userID, state, runState, now)
+	return nil
 }
 
 func runHuntingAutoBattle(player *dungeonEntity, enemy *dungeonEntity, rng *rand.Rand) string {
@@ -594,7 +649,10 @@ func updateActiveHuntingRunTx(
 			ended_at = NULL,
 			last_log_seq = $9,
 			last_log_message = $10,
-			updated_at = $11
+			updated_at = $11,
+			last_processed_at = $11,
+			failure_count = 0,
+			last_error = ''
 		WHERE user_id = $1
 	`
 	var reviveUntil any
@@ -658,7 +716,10 @@ func stopHuntingRunWithStateTx(
 			last_log_seq = $8,
 			last_log_message = $9,
 			ended_at = $10,
-			updated_at = $11
+			updated_at = $11,
+			last_processed_at = $11,
+			failure_count = 0,
+			last_error = ''
 		WHERE user_id = $1
 	`
 	if _, err := tx.Exec(

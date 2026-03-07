@@ -16,6 +16,15 @@ type UserRepository struct {
 	pool *pgxpool.Pool
 }
 
+type UserRegistrationLimitReachedError struct {
+	Limit   int
+	Current int
+}
+
+func (e *UserRegistrationLimitReachedError) Error() string {
+	return fmt.Sprintf("user registration limit reached: current=%d limit=%d", e.Current, e.Limit)
+}
+
 func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 	return &UserRepository{pool: pool}
 }
@@ -98,6 +107,111 @@ func (r *UserRepository) UpsertLinuxDoUser(ctx context.Context, linuxDoUserID, u
 	}
 
 	return &user, nil
+}
+
+func (r *UserRepository) UpsertLinuxDoUserWithRegistrationLimit(
+	ctx context.Context,
+	linuxDoUserID string,
+	username string,
+	avatar string,
+	registrationLimit int,
+) (*User, error) {
+	if registrationLimit <= 0 {
+		return r.UpsertLinuxDoUser(ctx, linuxDoUserID, username, avatar)
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin upsert user with registration limit transaction: %w", err)
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// Serialize registrations so max-open-registration cannot be bypassed by concurrent inserts.
+	if _, err := tx.Exec(ctx, "LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+		return nil, fmt.Errorf("lock users table for registration limit: %w", err)
+	}
+
+	const findExistingSQL = `
+		SELECT id, linux_do_user_id, linux_do_username, COALESCE(linux_do_avatar, ''), COALESCE(last_login_at, now())
+		FROM users
+		WHERE linux_do_user_id = $1
+		FOR UPDATE
+	`
+
+	user := &User{}
+	findErr := tx.QueryRow(ctx, findExistingSQL, linuxDoUserID).Scan(
+		&user.ID,
+		&user.LinuxDoUserID,
+		&user.LinuxDoUsername,
+		&user.LinuxDoAvatar,
+		&user.LastLoginAt,
+	)
+
+	switch {
+	case findErr == nil:
+		const updateExistingSQL = `
+			UPDATE users
+			SET
+				linux_do_username = $2,
+				linux_do_avatar = $3,
+				last_login_at = now(),
+				updated_at = now()
+			WHERE linux_do_user_id = $1
+			RETURNING id, linux_do_user_id, linux_do_username, COALESCE(linux_do_avatar, ''), last_login_at
+		`
+		if err := tx.QueryRow(ctx, updateExistingSQL, linuxDoUserID, username, avatar).Scan(
+			&user.ID,
+			&user.LinuxDoUserID,
+			&user.LinuxDoUsername,
+			&user.LinuxDoAvatar,
+			&user.LastLoginAt,
+		); err != nil {
+			return nil, fmt.Errorf("update existing linux do user: %w", err)
+		}
+	case errors.Is(findErr, pgx.ErrNoRows):
+		var current int
+		if err := tx.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&current); err != nil {
+			return nil, fmt.Errorf("count current users for registration limit: %w", err)
+		}
+		if current >= registrationLimit {
+			return nil, &UserRegistrationLimitReachedError{
+				Limit:   registrationLimit,
+				Current: current,
+			}
+		}
+
+		const insertSQL = `
+			INSERT INTO users (linux_do_user_id, linux_do_username, linux_do_avatar, last_login_at)
+			VALUES ($1, $2, $3, now())
+			RETURNING id, linux_do_user_id, linux_do_username, COALESCE(linux_do_avatar, ''), last_login_at
+		`
+		if err := tx.QueryRow(ctx, insertSQL, linuxDoUserID, username, avatar).Scan(
+			&user.ID,
+			&user.LinuxDoUserID,
+			&user.LinuxDoUsername,
+			&user.LinuxDoAvatar,
+			&user.LastLoginAt,
+		); err != nil {
+			return nil, fmt.Errorf("insert linux do user with registration limit: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("query existing linux do user for registration limit: %w", findErr)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit upsert user with registration limit transaction: %w", err)
+	}
+	tx = nil
+
+	if err := r.ensureDefaultPlayerData(ctx, user.ID, username); err != nil {
+		return nil, err
+	}
+
+	return user, nil
 }
 
 func (r *UserRepository) ensureDefaultPlayerData(ctx context.Context, userID uuid.UUID, username string) error {
