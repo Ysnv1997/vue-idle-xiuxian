@@ -1,154 +1,189 @@
 <template>
-  <section class="page-view exploration-view">
+  <div class="page-view exploration-page">
+    <!-- 顶部标题区 -->
     <header class="page-head">
-      <p class="page-eyebrow">外出历练</p>
-      <h2>探索</h2>
-      <p class="page-desc">探索各处秘境，寻找机缘造化。自动探索由后端持续推进，离开页面也不会中断。</p>
+      <div class="head-main">
+        <p class="page-eyebrow">云游四海 · 寻觅机缘</p>
+        <h2 class="page-title">大世界探索</h2>
+      </div>
+      <div class="head-status" v-if="isAutoExploring">
+        <n-tag type="info" round class="pulse-tag">
+          <template #icon><n-icon><CompassOutline /></n-icon></template>
+          自动探索中: {{ explorationLocationLabel }}
+        </n-tag>
+      </div>
     </header>
 
-    <n-card :bordered="false" class="page-card">
-      <n-space vertical>
-        <n-alert type="info" show-icon>
-          <template #icon>
-            <n-icon>
-              <compass-outline />
-            </n-icon>
-          </template>
-          自动探索按 3 秒一轮结算，离线最长累计 12 小时；探索会与打坐、刷图、炼丹、秘境互斥。
-        </n-alert>
+    <!-- 当前探索实时 HUD -->
+    <section class="exploration-hud" :class="{ 'is-active': isAutoExploring }">
+      <div class="hud-main">
+        <div class="hud-info">
+          <div class="info-group">
+            <span class="label">累计轮次</span>
+            <strong class="value">{{ explorationTotalRuns }}</strong>
+          </div>
+          <div class="info-group">
+            <span class="label">灵力消耗</span>
+            <strong class="value">{{ explorationTotalSpiritCost }}</strong>
+          </div>
+          <div class="info-group wide">
+            <span class="label">最新机缘</span>
+            <div class="latest-log-hint">{{ explorationLatestMessage }}</div>
+          </div>
+        </div>
+        
+        <div class="hud-progress-area">
+          <div class="progress-labels">
+            <span>{{ explorationProgressText }}</span>
+            <strong>{{ explorationProgressPercentDisplay }}%</strong>
+          </div>
+          <n-progress
+            type="line"
+            :percentage="explorationProgressPercent"
+            :show-indicator="false"
+            processing
+            :height="12"
+            color="var(--accent-primary)"
+            rail-color="var(--accent-muted)"
+          />
+        </div>
+      </div>
+      
+      <div class="hud-actions" v-if="isAutoExploring">
+        <n-button type="error" secondary round @click="stopAutoExploration" :loading="isSubmitting">
+          停止探索
+        </n-button>
+      </div>
+    </section>
 
-        <n-card size="small" embedded>
-          <n-space vertical>
-            <n-space justify="space-between" align="center">
-              <n-space align="center" size="small">
-                <n-tag :type="realtimeStatusTagType" size="small" bordered>
-                  {{ realtimeStatusLabel }}
-                </n-tag>
-                <n-text depth="3">{{ realtimeStatusDetail }}</n-text>
-              </n-space>
+    <!-- 地图网格列表 -->
+    <section class="locations-grid-section">
+      <div class="section-title">选择历练地点</div>
+      <div class="location-cards-container">
+        <div 
+          v-for="location in locationOptions" 
+          :key="location.id"
+          class="location-card"
+          :class="{ 
+            'is-locked': playerStore.level < location.minLevel,
+            'is-active': isAutoExploring && explorationRunStatus.locationId === location.id
+          }"
+        >
+          <div class="card-bg-pattern"></div>
+          
+          <div class="card-header">
+            <div class="location-name">{{ location.name }}</div>
+            <n-tag 
+              v-if="playerStore.level < location.minLevel" 
+              size="small" 
+              type="error" 
+              class="lock-tag"
+            >
+              <template #icon><n-icon><LockClosedOutline /></n-icon></template>
+              {{ getRealmName(location.minLevel).name }}
+            </n-tag>
+            <n-tag v-else-if="isAutoExploring && explorationRunStatus.locationId === location.id" size="small" type="info" round>
+              探索中
+            </n-tag>
+          </div>
 
-              <n-button
-                v-if="!gameRealtimeStore.connected"
-                size="small"
-                secondary
-                :disabled="gameRealtimeStore.connecting"
-                @click="reconnectRealtime"
-              >
-                {{ gameRealtimeStore.connecting ? '连接中' : '重连实时状态' }}
-              </n-button>
-            </n-space>
+          <p class="location-desc">{{ location.description }}</p>
 
-            <n-progress
-              type="line"
-              :percentage="explorationProgressPercent"
-              :show-indicator="false"
-              :height="14"
-              color="#2080f0"
-            />
-
-            <n-descriptions bordered :column="2" label-placement="left">
-              <n-descriptions-item label="当前状态">{{ explorationStateLabel }}</n-descriptions-item>
-              <n-descriptions-item label="当前地点">{{ explorationLocationLabel }}</n-descriptions-item>
-              <n-descriptions-item label="累计探索">{{ explorationTotalRuns }}</n-descriptions-item>
-              <n-descriptions-item label="累计消耗">{{ explorationTotalSpiritCost }} 灵力</n-descriptions-item>
-              <n-descriptions-item :span="2" label="最近动态">
-                {{ explorationLatestMessage }}
-              </n-descriptions-item>
-            </n-descriptions>
-
-            <div v-if="isAutoExploring" class="exploration-progress-row">
-              <n-text depth="3">{{ explorationProgressText }}</n-text>
-              <n-text class="exploration-progress-percent">{{ explorationProgressPercentDisplay }}%</n-text>
+          <div class="location-meta">
+            <div class="meta-item">
+              <span class="m-label">消耗灵力</span>
+              <span class="m-value">{{ location.spiritCost }}</span>
             </div>
-          </n-space>
-        </n-card>
+            <div class="meta-item">
+              <span class="m-label">产出预览</span>
+              <span class="m-value">机缘、灵草</span>
+            </div>
+          </div>
 
-        <n-grid :cols="2" :x-gap="12" :y-gap="12">
-          <n-grid-item v-for="location in locationOptions" :key="location.id">
-            <n-card :title="location.name" size="small">
-              <n-space vertical>
-                <n-text depth="3">{{ location.description }}</n-text>
-                <n-space justify="space-between">
-                  <n-text>消耗灵力：{{ location.spiritCost }}</n-text>
-                  <n-text>最低境界：{{ getRealmName(location.minLevel).name }}</n-text>
-                </n-space>
+          <div class="card-actions">
+            <n-button
+              type="primary"
+              secondary
+              size="small"
+              @click="exploreOnce(location)"
+              :disabled="!canExploreOnce(location)"
+              :loading="isSubmitting"
+            >
+              探索一次
+            </n-button>
 
-                <n-space justify="space-between">
-                  <n-tag v-if="playerStore.level >= location.minLevel" size="small" type="success" bordered>已解锁</n-tag>
-                  <n-tag v-else size="small" type="warning" bordered>未解锁</n-tag>
-                  <n-tag
-                    v-if="isAutoExploring && explorationRunStatus.locationId === location.id"
-                    size="small"
-                    type="info"
-                    bordered
-                  >
-                    自动探索中
-                  </n-tag>
-                </n-space>
+            <n-button
+              v-if="!(isAutoExploring && explorationRunStatus.locationId === location.id)"
+              type="success"
+              size="small"
+              round
+              @click="startAutoExploration(location)"
+              :disabled="!canStartAuto(location)"
+              :loading="isSubmitting"
+            >
+              自动探索
+            </n-button>
+            <n-button
+              v-else
+              type="error"
+              size="small"
+              round
+              ghost
+              @click="stopAutoExploration"
+              :loading="isSubmitting"
+            >
+              停止自动
+            </n-button>
+          </div>
 
-                <n-space>
-                  <n-button
-                    type="primary"
-                    @click="exploreOnce(location)"
-                    :disabled="!canExploreOnce(location)"
-                    :loading="isSubmitting"
-                  >
-                    探索一次
-                  </n-button>
+          <!-- 锁定遮罩 -->
+          <div v-if="playerStore.level < location.minLevel" class="lock-overlay"></div>
+        </div>
+      </div>
+    </section>
 
-                  <n-button
-                    v-if="isAutoExploring && explorationRunStatus.locationId === location.id"
-                    type="warning"
-                    @click="stopAutoExploration"
-                    :loading="isSubmitting"
-                  >
-                    停止自动
-                  </n-button>
-                  <n-button
-                    v-else
-                    type="success"
-                    @click="startAutoExploration(location)"
-                    :disabled="!canStartAuto(location)"
-                    :loading="isSubmitting"
-                  >
-                    开始自动
-                  </n-button>
-                </n-space>
-              </n-space>
-            </n-card>
-          </n-grid-item>
-        </n-grid>
+    <!-- 探索日志 -->
+    <section class="exploration-logs-section">
+      <div class="section-head">
+        <span class="section-title">历练传书</span>
+        <n-button size="tiny" quaternary @click="clearLogPanel">清空</n-button>
+      </div>
+      <log-panel ref="logRef" title="" />
+    </section>
 
-        <n-divider>探索统计</n-divider>
-        <n-descriptions :column="2" bordered>
-          <n-descriptions-item label="探索次数">
-            {{ playerStore.explorationCount }}
-          </n-descriptions-item>
-          <n-descriptions-item label="灵石数量">
-            {{ playerStore.spiritStones }}
-          </n-descriptions-item>
-          <n-descriptions-item label="灵草数量">
-            {{ playerStore.herbs.length }}
-          </n-descriptions-item>
-          <n-descriptions-item label="丹方残页">
-            {{ Object.values(playerStore.pillFragments || {}).reduce((a, b) => a + b, 0) }}
-          </n-descriptions-item>
-        </n-descriptions>
-      </n-space>
-    </n-card>
-
-    <n-card :bordered="false" class="page-card log-card">
-      <n-space justify="end" style="margin-bottom: 8px">
-        <n-button size="small" @click="clearLogPanel" type="error" secondary>清空日志</n-button>
-      </n-space>
-      <log-panel ref="logRef" title="探索日志" />
-    </n-card>
-  </section>
+    <!-- 底部统计面板 -->
+    <footer class="exploration-footer">
+      <div class="stats-ribbon">
+        <div class="stat-chip">
+          <span class="label">累计探索</span>
+          <span class="value">{{ playerStore.explorationCount }} 次</span>
+        </div>
+        <div class="stat-chip">
+          <span class="label">丹方残页</span>
+          <span class="value">{{ totalPillFragments }} 片</span>
+        </div>
+        <div class="stat-chip connection-chip" :class="gameRealtimeStore.connected ? 'is-online' : 'is-offline'">
+          <span class="dot"></span>
+          <span>{{ realtimeStatusLabel }}</span>
+          <n-button 
+            v-if="!gameRealtimeStore.connected" 
+            text 
+            size="tiny" 
+            type="primary" 
+            @click="reconnectRealtime"
+            style="margin-left: 8px"
+          >
+            重连
+          </n-button>
+        </div>
+      </div>
+    </footer>
+  </div>
 </template>
 
 <script setup>
   import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-  import { CompassOutline } from '@vicons/ionicons5'
+  import { CompassOutline, LockClosedOutline, PlanetOutline } from '@vicons/ionicons5'
   import { usePlayerStore } from '../stores/player'
   import { useGameRealtimeStore } from '../stores/game-realtime'
   import { getRealmName } from '../plugins/realm'
@@ -257,22 +292,6 @@
     explorationLastSeenLogSeq.value = seq
   }
 
-  const formatExplorationState = state => {
-    switch (state) {
-      case 'running':
-        return '自动探索中'
-      case 'insufficient_spirit':
-        return '灵力不足'
-      case 'offline_timeout':
-        return '离线结束'
-      case 'invalid_location':
-        return '地点失效'
-      case 'stopped':
-      default:
-        return '未探索'
-    }
-  }
-
   const applyServerResult = result => {
     if (result?.snapshot) {
       playerStore.applyServerSnapshot(result.snapshot)
@@ -297,165 +316,67 @@
     return Boolean(explorationRunStatus.value?.isActive)
   })
 
-  const explorationStateLabel = computed(() => {
-    return formatExplorationState(explorationRunStatus.value?.state)
-  })
-
   const explorationLocationLabel = computed(() => {
     const locationLabel = String(explorationRunStatus.value.locationName || explorationRunStatus.value.locationId || '').trim()
-    if (locationLabel) {
-      return locationLabel
-    }
-    return isAutoExploring.value ? '未知地点' : '无'
+    return locationLabel || (isAutoExploring.value ? '未知地点' : '无')
   })
 
-  const explorationTotalRuns = computed(() => {
-    return Math.max(0, Math.floor(toFiniteNumber(explorationRunStatus.value?.totalRuns, 0)))
-  })
-
-  const explorationTotalSpiritCost = computed(() => {
-    return Math.max(0, Math.floor(toFiniteNumber(explorationRunStatus.value?.totalSpiritCost, 0)))
-  })
+  const explorationTotalRuns = computed(() => Math.max(0, Math.floor(toFiniteNumber(explorationRunStatus.value?.totalRuns, 0))))
+  const explorationTotalSpiritCost = computed(() => Math.max(0, Math.floor(toFiniteNumber(explorationRunStatus.value?.totalSpiritCost, 0))))
 
   const explorationLatestMessage = computed(() => {
     const message = String(explorationRunStatus.value?.lastLogMessage || '').trim()
-    if (message) {
-      return message
-    }
-    if (isAutoExploring.value) {
-      return '自动探索进行中'
-    }
-    return '暂无新的探索记录'
-  })
-
-  const realtimeStatusTagType = computed(() => {
-    if (gameRealtimeStore.connected) {
-      return 'success'
-    }
-    if (gameRealtimeStore.connecting) {
-      return 'warning'
-    }
-    return 'default'
+    return message || (isAutoExploring.value ? '自动探索进行中' : '暂无新的探索记录')
   })
 
   const realtimeStatusLabel = computed(() => {
-    if (gameRealtimeStore.connected) {
-      return '实时同步中'
-    }
-    if (gameRealtimeStore.connecting) {
-      return '实时重连中'
-    }
-    return '实时已断开'
-  })
-
-  const realtimeStatusDetail = computed(() => {
-    const now = explorationProgressNow.value
-    if (gameRealtimeStore.connected) {
-      const lastSyncAt = Number(gameRealtimeStore.lastSyncAt || 0)
-      if (lastSyncAt <= 0) {
-        return '等待首个服务端状态'
-      }
-      const seconds = Math.max(0, Math.floor((now - lastSyncAt) / 1000))
-      return seconds <= 1 ? '刚刚收到服务端状态' : `${seconds}秒前收到服务端状态`
-    }
-    if (gameRealtimeStore.connecting) {
-      return '正在重连游戏实时状态'
-    }
-    return '当前页面会自动回退到状态补拉'
+    if (gameRealtimeStore.connected) return '实时在线'
+    if (gameRealtimeStore.connecting) return '正在重连'
+    return '离线状态'
   })
 
   const explorationProgressPercent = computed(() => {
     if (!isAutoExploring.value) return 0
     const basePercent = Math.max(0, Math.min(100, toFiniteNumber(explorationRunStatus.value?.progressPercent, 0)))
     const remainingMs = Math.max(0, Math.floor(toFiniteNumber(explorationRunStatus.value?.progressRemainingMs, 0)))
-    if (remainingMs <= 0 || explorationStatusReceivedAt.value <= 0) {
-      return basePercent
-    }
+    if (remainingMs <= 0 || explorationStatusReceivedAt.value <= 0) return basePercent
     const elapsedMs = Math.max(0, explorationProgressNow.value - explorationStatusReceivedAt.value)
     const remainRatio = Math.max(0.001, 1 - basePercent / 100)
     const totalMs = Math.max(1, Math.round(remainingMs / remainRatio))
-    const percent = basePercent + (elapsedMs * 100) / totalMs
-    return Math.max(0, Math.min(100, percent))
+    return Math.max(0, Math.min(100, basePercent + (elapsedMs * 100) / totalMs))
   })
 
-  const explorationProgressPercentDisplay = computed(() => {
-    return explorationProgressPercent.value.toFixed(2)
-  })
-
-  const explorationProgressRemainingMs = computed(() => {
-    if (!isAutoExploring.value) return 0
-    const baseRemaining = Math.max(0, Math.floor(toFiniteNumber(explorationRunStatus.value?.progressRemainingMs, 0)))
-    if (baseRemaining <= 0 || explorationStatusReceivedAt.value <= 0) {
-      return baseRemaining
-    }
-    const elapsedMs = Math.max(0, explorationProgressNow.value - explorationStatusReceivedAt.value)
-    return Math.max(0, baseRemaining - elapsedMs)
-  })
+  const explorationProgressPercentDisplay = computed(() => explorationProgressPercent.value.toFixed(1))
 
   const explorationProgressText = computed(() => {
+    if (!isAutoExploring.value) return '未在探索'
     const progressName = explorationRunStatus.value?.progressLabel || '探索进度'
-    const remainingSeconds = Math.max(0, Math.ceil(explorationProgressRemainingMs.value / 1000))
-    return `${progressName}：预计${remainingSeconds}秒内完成当前轮次`
+    return progressName
   })
 
+  const totalPillFragments = computed(() => Object.values(playerStore.pillFragments || {}).reduce((a, b) => a + b, 0))
+
   const canExploreOnce = location => {
-    if (!location || isSubmitting.value) return false
-    if (isAutoExploring.value) return false
-    if (playerStore.level < Number(location.minLevel || 0)) return false
-    return playerStore.spirit >= Number(location.spiritCost || 0)
+    if (!location || isSubmitting.value || isAutoExploring.value) return false
+    return playerStore.level >= location.minLevel && playerStore.spirit >= location.spiritCost
   }
 
   const canStartAuto = location => {
     if (!location || isSubmitting.value) return false
-    if (playerStore.level < Number(location.minLevel || 0)) return false
-    if (playerStore.spirit < Number(location.spiritCost || 0)) return false
+    if (playerStore.level < location.minLevel || playerStore.spirit < location.spiritCost) return false
     if (!isAutoExploring.value) return true
     return explorationRunStatus.value.locationId === location.id
   }
 
   const exploreOnce = async location => {
-    if (!canExploreOnce(location)) {
-      if (isAutoExploring.value) {
-        showMessage('warning', '自动探索进行中，请先停止自动探索。')
-      } else if (playerStore.spirit < location.spiritCost) {
-        showMessage('error', '灵力不足！')
-      }
-      return
-    }
-
     try {
       isSubmitting.value = true
       const result = await startExploration(location.id)
       applyServerResult(result)
       const messages = Array.isArray(result?.messages) ? result.messages : []
-      if (messages.length === 0) {
-        showMessage('success', '探索完成！')
-      } else {
-        for (const message of messages) {
-          showMessage(resolveExplorationLogType(message), message)
-        }
-      }
+      if (messages.length === 0) showMessage('success', '探索完成！')
+      else messages.forEach(m => showMessage(resolveExplorationLogType(m), m))
     } catch (error) {
-      if (error?.payload?.error === 'insufficient spirit') {
-        showMessage('error', '灵力不足！')
-        return
-      }
-      if (error?.payload?.error === 'location locked') {
-        showMessage('error', `境界不足，需达到${error.payload.requiredLevel}级`)
-        return
-      }
-      if (error?.payload?.error === 'invalid location') {
-        showMessage('error', '地点不存在，请刷新后重试')
-        return
-      }
-      if (error?.payload?.error === 'activity conflict' && error?.payload?.conflict === 'dungeon') {
-        showMessage('warning', '秘境进行中，无法探索。')
-        return
-      }
-      if (error?.payload?.error === 'activity conflict' && error?.payload?.conflict === 'exploration') {
-        showMessage('warning', '自动探索进行中，请先停止自动探索。')
-        return
-      }
       showMessage('error', error?.message || '探索失败！')
     } finally {
       isSubmitting.value = false
@@ -463,39 +384,12 @@
   }
 
   const startAutoExploration = async location => {
-    if (!canStartAuto(location)) {
-      if (isAutoExploring.value && explorationRunStatus.value.locationId !== location.id) {
-        showMessage('warning', '已有自动探索在进行，请先停止当前自动探索。')
-      }
-      return
-    }
-
     try {
       isSubmitting.value = true
       const result = await startAutoExplorationRun(location.id)
       applyServerResult(result)
       applyExplorationActionResult(result)
     } catch (error) {
-      if (error?.payload?.error === 'insufficient spirit') {
-        showMessage('error', '灵力不足，无法开始自动探索。')
-        return
-      }
-      if (error?.payload?.error === 'location locked') {
-        showMessage('error', `境界不足，需达到${error.payload.requiredLevel}级`)
-        return
-      }
-      if (error?.payload?.error === 'invalid location') {
-        showMessage('error', '地点不存在，请刷新后重试')
-        return
-      }
-      if (error?.payload?.error === 'activity conflict' && error?.payload?.conflict === 'dungeon') {
-        showMessage('warning', '秘境进行中，无法开始自动探索。')
-        return
-      }
-      if (error?.payload?.error === 'activity conflict' && error?.payload?.conflict === 'exploration') {
-        showMessage('warning', '自动探索进行中，请先停止当前自动探索。')
-        return
-      }
       showMessage('error', error?.message || '开始自动探索失败')
     } finally {
       isSubmitting.value = false
@@ -503,14 +397,13 @@
   }
 
   const stopAutoExploration = async () => {
-    if (isSubmitting.value) return
     try {
       isSubmitting.value = true
       const result = await stopAutoExplorationRun()
       applyServerResult(result)
       applyExplorationActionResult(result)
     } catch (error) {
-      showMessage('error', error?.message || '停止自动探索失败')
+      showMessage('error', '停止失败')
     } finally {
       isSubmitting.value = false
     }
@@ -525,9 +418,7 @@
       explorationStatusReceivedAt.value = Date.now()
       syncExplorationStatusLog(explorationRunStatus.value)
     } catch (error) {
-      if (!silent) {
-        showMessage('error', error?.message || '加载探索状态失败')
-      }
+      if (!silent) showMessage('error', '同步状态失败')
     } finally {
       isLoadingStatus.value = false
     }
@@ -541,107 +432,218 @@
       explorationLogSeqInitialized.value = true
       return
     }
-
     await refreshExplorationStatus()
   }
 
-  const clearExplorationProgressTimer = () => {
-    if (!explorationProgressTimer.value) return
-    clearInterval(explorationProgressTimer.value)
-    explorationProgressTimer.value = null
-  }
+  const reconnectRealtime = () => gameRealtimeStore.connect()
 
-  const startExplorationProgressTimer = () => {
-    if (explorationProgressTimer.value) return
-    explorationProgressTimer.value = setInterval(() => {
-      explorationProgressNow.value = Date.now()
-    }, explorationProgressRefreshIntervalMs)
-  }
+  const clearLogPanel = () => logRef.value?.clearLogs()
 
-  const clearExplorationStatusSyncTimer = () => {
-    if (!explorationStatusSyncTimer.value) return
-    clearInterval(explorationStatusSyncTimer.value)
-    explorationStatusSyncTimer.value = null
-  }
-
-  const startExplorationStatusSyncTimer = () => {
-    if (explorationStatusSyncTimer.value) return
-    explorationStatusSyncTimer.value = setInterval(() => {
-      const lastSyncAt = Number(gameRealtimeStore.lastSyncAt || 0)
-      const realtimeIsFresh =
-        gameRealtimeStore.connected && lastSyncAt > 0 && Date.now() - lastSyncAt <= explorationRealtimeStaleMs
-      if (realtimeIsFresh) {
-        return
-      }
-      void refreshExplorationStatus({ silent: true })
-    }, explorationStatusSyncIntervalMs)
-  }
-
-  const reconnectRealtime = () => {
-    gameRealtimeStore.connect()
-  }
-
-  watch(
-    () => gameRealtimeStore.explorationRun,
-    run => {
-      if (!run || typeof run !== 'object') return
-      explorationRunStatus.value = normalizeExplorationRun(run)
-      explorationStatusReceivedAt.value = Date.now()
-      syncExplorationStatusLog(explorationRunStatus.value)
-    },
-    { immediate: true }
-  )
+  let progressTimer = null
+  let syncTimer = null
 
   onMounted(async () => {
     await loadInitialExplorationStatus()
-    startExplorationProgressTimer()
-    startExplorationStatusSyncTimer()
+    progressTimer = setInterval(() => explorationProgressNow.value = Date.now(), 200)
+    syncTimer = setInterval(() => {
+      const lastSync = Number(gameRealtimeStore.lastSyncAt || 0)
+      if (!gameRealtimeStore.connected || Date.now() - lastSync > 12000) refreshExplorationStatus({ silent: true })
+    }, 5000)
   })
 
   onUnmounted(() => {
-    clearExplorationProgressTimer()
-    clearExplorationStatusSyncTimer()
+    clearInterval(progressTimer)
+    clearInterval(syncTimer)
   })
 
-  const clearLogPanel = () => {
-    logRef.value?.clearLogs()
-  }
+  watch(() => gameRealtimeStore.explorationRun, run => {
+    if (!run) return
+    explorationRunStatus.value = normalizeExplorationRun(run)
+    explorationStatusReceivedAt.value = Date.now()
+    syncExplorationStatusLog(explorationRunStatus.value)
+  }, { immediate: true })
+
+  const qualityOptions = [
+    { label: '全部品质', value: 'all' },
+    { label: '筑基以上', value: 'higher' }
+  ]
+  const selectedQuality = ref('all')
 </script>
 
 <style scoped>
-  :deep(.n-space) {
-    width: 100%;
-  }
+.exploration-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
 
-  .exploration-progress-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 24px;
+}
 
-  .exploration-progress-percent {
-    min-width: 56px;
-    text-align: right;
-  }
+.pulse-tag {
+  animation: pulse 2s infinite;
+}
 
-  @media (max-width: 768px) {
-    :deep(.n-grid) {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
 
-    :deep(.n-descriptions) {
-      --n-td-padding: 8px;
-    }
+/* HUD 样式 */
+.exploration-hud {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 24px;
+  padding: 24px;
+  margin-bottom: 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.3s ease;
+  opacity: 0.6;
+}
 
-    .exploration-progress-row {
-      flex-direction: column;
-      align-items: flex-start;
-    }
+.exploration-hud.is-active {
+  opacity: 1;
+  border-color: var(--accent-primary);
+  box-shadow: 0 8px 32px var(--accent-muted);
+}
 
-    .exploration-progress-percent {
-      min-width: 0;
-      text-align: left;
-    }
-  }
+.hud-main { flex: 1; display: flex; flex-direction: column; gap: 20px; margin-right: 40px; }
+
+.hud-info { display: grid; grid-template-columns: 100px 100px 1fr; gap: 24px; }
+.info-group { display: flex; flex-direction: column; gap: 4px; }
+.info-group .label { font-size: 12px; color: var(--ink-sub); }
+.info-group .value { font-size: 18px; font-family: var(--font-display); }
+.latest-log-hint { font-size: 14px; color: var(--accent-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.hud-progress-area { display: flex; flex-direction: column; gap: 8px; }
+.progress-labels { display: flex; justify-content: space-between; font-size: 13px; }
+
+/* 地图卡片 */
+.locations-grid-section { margin-bottom: 32px; }
+.section-title { font-size: 16px; font-weight: bold; margin-bottom: 16px; font-family: var(--font-display); opacity: 0.8; }
+
+.location-cards-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.location-card {
+  position: relative;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 24px;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.location-card:hover:not(.is-locked) {
+  transform: translateY(-4px);
+  border-color: var(--accent-primary);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.05);
+}
+
+.location-card.is-active {
+  border-color: var(--accent-primary);
+  background: var(--accent-muted);
+}
+
+.card-bg-pattern {
+  position: absolute;
+  top: -20px;
+  right: -20px;
+  width: 100px;
+  height: 100px;
+  background: radial-gradient(circle, var(--accent-muted) 0%, transparent 70%);
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.location-name { font-size: 20px; font-family: var(--font-display); font-weight: bold; }
+
+.location-desc { font-size: 13px; color: var(--ink-sub); line-height: 1.6; height: 40px; overflow: hidden; }
+
+.location-meta { display: flex; gap: 20px; padding: 12px 0; border-top: 1px dashed var(--panel-border); }
+.meta-item { display: flex; flex-direction: column; gap: 2px; }
+.m-label { font-size: 11px; color: var(--ink-sub); }
+.m-value { font-size: 13px; font-weight: bold; }
+
+.card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: auto; }
+
+.lock-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.4);
+  backdrop-filter: grayscale(1);
+  z-index: 1;
+}
+.location-card.is-locked { opacity: 0.7; }
+
+/* 日志部分 */
+.exploration-logs-section {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 20px;
+  margin-bottom: 80px;
+}
+.section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+
+/* 底部统计 */
+.exploration-footer {
+  position: fixed;
+  bottom: 80px; /* 留出 App 底部 Tabbar 空间 */
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 40px);
+  max-width: 800px;
+  z-index: 100;
+}
+
+.stats-ribbon {
+  background: color-mix(in srgb, var(--panel-bg) 90%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 8px 24px;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+}
+
+.stat-chip { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.stat-chip .label { color: var(--ink-sub); }
+.stat-chip .value { font-weight: bold; color: var(--accent-primary); }
+
+.connection-chip { gap: 6px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: #9ab0c6; }
+.is-online .dot { background: #18a058; box-shadow: 0 0 8px #18a058; }
+.is-offline .dot { background: #d03050; }
+
+@media (max-width: 1080px) {
+  .exploration-footer { bottom: 100px; width: 90%; }
+}
+
+@media (max-width: 768px) {
+  .exploration-hud { flex-direction: column; gap: 20px; text-align: center; }
+  .hud-main { margin-right: 0; width: 100%; }
+  .hud-info { grid-template-columns: 1fr 1fr; }
+  .info-group.wide { grid-column: span 2; }
+  .stats-ribbon { flex-direction: column; border-radius: 20px; padding: 16px; gap: 10px; }
+}
 </style>

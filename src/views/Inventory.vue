@@ -1,618 +1,338 @@
 <template>
-  <section class="page-view inventory-view">
+  <div class="page-view inventory-page">
+    <!-- 顶部标题与快速筛选 -->
     <header class="page-head">
-      <p class="page-eyebrow">洞府藏物</p>
-      <h2>背包</h2>
-      <p class="page-desc">管理装备、灵草、丹药、丹方和灵宠。</p>
+      <div class="head-main">
+        <p class="page-eyebrow">洞府藏物</p>
+        <h2 class="page-title">乾坤袋</h2>
+      </div>
+      <div class="head-action">
+        <n-button-group round>
+          <n-button 
+            v-for="cat in categories" 
+            :key="cat.key"
+            :secondary="activeCategory !== cat.key"
+            :type="activeCategory === cat.key ? 'primary' : 'default'"
+            @click="activeCategory = cat.key"
+          >
+            {{ cat.label }}
+          </n-button>
+        </n-button-group>
+      </div>
     </header>
 
-    <n-card :bordered="false" class="page-card">
-      <n-tabs type="line">
-          <n-tab-pane name="equipment" tab="装备">
-            <n-space vertical>
-              <n-alert type="info" :show-icon="false">
-                装备改为按部位管理。出售操作需要二次确认，默认通过“详情”查看后再处理，减少误卖。
-              </n-alert>
-
-              <div class="equipment-layout">
-                <n-card size="small" title="已装备部位" class="equipment-slots-card">
-                  <div class="equipment-slot-grid">
-                    <div v-for="(name, type) in equipmentTypes" :key="type" class="equipment-slot-card">
-                      <div class="equipment-slot-head">
-                        <strong>{{ name }}</strong>
-                        <n-tag v-if="selectedEquipmentType === type" type="primary" size="small" bordered>当前仓库</n-tag>
-                      </div>
-                      <template v-if="playerStore.equippedArtifacts[type]">
-                        <div class="equipment-slot-name">{{ playerStore.equippedArtifacts[type].name }}</div>
-                        <n-tag size="small" :bordered="false" :style="{ color: playerStore.equippedArtifacts[type].qualityInfo?.color }">
-                          {{ playerStore.equippedArtifacts[type].qualityInfo?.name || '未知品质' }}
-                        </n-tag>
-                        <div class="equipment-slot-actions">
-                          <n-button size="small" tertiary @click="showEquipmentList(type)">查看仓库</n-button>
-                          <n-button size="small" type="info" @click="showEquipmentDetails(playerStore.equippedArtifacts[type])">详情</n-button>
-                          <n-button size="small" type="warning" @click="unequipItem(type)">卸下</n-button>
-                        </div>
-                      </template>
-                      <template v-else>
-                        <div class="equipment-slot-empty">未装备</div>
-                        <n-button size="small" tertiary @click="showEquipmentList(type)">查看该部位</n-button>
-                      </template>
-                    </div>
+    <div class="inventory-layout">
+      <!-- 左侧：修士化身（装备位） -->
+      <aside class="character-section">
+        <div class="character-doll">
+          <div class="doll-overlay">
+            <div class="doll-title">道躯穿戴</div>
+            <div class="spirit-stones-tag">
+              <n-icon><WalletOutlined /></n-icon>
+              {{ formatNumber(playerStore.spiritStones) }} 灵石
+            </div>
+          </div>
+          
+          <div class="equipment-slots">
+            <!-- 左右分布的槽位 -->
+            <div class="slot-column left">
+              <div v-for="slot in leftSlots" :key="slot" class="item-slot-wrapper">
+                <div 
+                  class="item-slot" 
+                  :class="[getSlotQualityClass(slot), { 'is-empty': !playerStore.equippedArtifacts[slot] }]"
+                  @click="handleSlotClick(slot)"
+                >
+                  <div class="slot-placeholder" v-if="!playerStore.equippedArtifacts[slot]">
+                    {{ equipmentTypes[slot].slice(0, 1) }}
                   </div>
-                </n-card>
-
-                <n-card size="small" class="equipment-list-card">
-                  <template #header>
-                    {{ equipmentTypes[selectedEquipmentType] || '装备仓库' }}
-                  </template>
-                  <template #header-extra>
-                    <n-space>
-                      <n-select v-model:value="selectedEquipmentType" :options="equipmentTypeOptions" style="width: 140px" />
-                      <n-select v-model:value="selectedQuality" :options="qualityOptions" style="width: 140px" />
-                    </n-space>
-                  </template>
-
-                  <n-space vertical>
-                    <div class="equipment-list-toolbar">
-                      <n-text depth="3">当前共有 {{ filteredEquipmentList.length }} 件符合条件的装备</n-text>
-                      <n-button type="warning" secondary :disabled="filteredEquipmentList.length === 0" @click="openBatchSellConfirm">
-                        一键卖出筛选结果
-                      </n-button>
-                    </div>
-
-                    <div v-if="equipmentList.length" class="equipment-item-list">
-                      <div v-for="equipment in equipmentList" :key="equipment.id" class="equipment-row-card">
-                        <div class="equipment-row-main">
-                          <div>
-                            <div class="equipment-row-title">{{ equipment.name }}</div>
-                            <div class="equipment-row-meta">
-                              <n-tag size="small" :bordered="false" :style="{ color: equipment.qualityInfo.color }">
-                                {{ equipment.qualityInfo.name }}
-                              </n-tag>
-                              <span>需求：{{ getRealmName(equipment.requiredRealm).name }}</span>
-                            </div>
-                            <div class="equipment-row-stats">{{ summarizeEquipmentStats(equipment) }}</div>
-                          </div>
-                          <div class="equipment-row-actions">
-                            <n-button size="small" type="primary" @click="equipItem(equipment)">装备</n-button>
-                            <n-button size="small" tertiary @click="showEquipmentDetails(equipment)">详情</n-button>
-                            <n-button size="small" type="info" @click="quickListAuction(equipment)">上架</n-button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <n-empty v-else description="当前筛选条件下没有装备" />
-
-                    <n-pagination
-                      v-if="filteredEquipmentList.length > equipmentPageSize"
-                      v-model:page="currentEquipmentPage"
-                      :page-size="equipmentPageSize"
-                      :item-count="filteredEquipmentList.length"
-                      @update:page-size="onEquipmentPageSizeChange"
-                      :page-slot="5"
-                    />
-                  </n-space>
-                </n-card>
+                  <div class="slot-icon" v-else>
+                    <!-- 这里未来可以放图标 -->
+                    <div class="slot-mark">{{ equipmentTypes[slot].slice(0, 1) }}</div>
+                  </div>
+                  <div class="slot-label">{{ equipmentTypes[slot] }}</div>
+                </div>
               </div>
-            </n-space>
-          </n-tab-pane>
-          <n-tab-pane name="herbs" tab="灵草">
-            <n-grid :cols="2" :x-gap="12" :y-gap="8" v-if="groupedHerbs.length">
-              <n-grid-item v-for="herb in groupedHerbs" :key="herb.id">
-                <n-card hoverable>
-                  <template #header>
-                    <n-space justify="space-between">
-                      <span>{{ herb.name }}({{ herb.count }})</span>
-                    </n-space>
-                  </template>
-                  <p>{{ herb.description }}</p>
-                </n-card>
-              </n-grid-item>
-            </n-grid>
-            <n-empty v-else />
-          </n-tab-pane>
-          <n-tab-pane name="pills" tab="丹药">
-            <n-grid :cols="2" :x-gap="12" :y-gap="8" v-if="groupedPills.length">
-              <n-grid-item v-for="pill in groupedPills" :key="pill.id">
-                <n-card hoverable>
-                  <template #header>
-                    <n-space justify="space-between">
-                      <span>{{ pill.name }}({{ pill.count }})</span>
-                      <n-button size="small" type="primary" @click="usePill(pill)">服用</n-button>
-                    </n-space>
-                  </template>
-                  <p>{{ pill.description }}</p>
-                </n-card>
-              </n-grid-item>
-            </n-grid>
-            <n-empty v-else />
-          </n-tab-pane>
-          <n-tab-pane name="formulas" tab="丹方">
-            <n-tabs type="segment">
-              <n-tab-pane name="complete" tab="完整丹方">
-                <n-grid :cols="2" :x-gap="12" :y-gap="8" v-if="groupedFormulas.complete.length">
-                  <n-grid-item v-for="formula in groupedFormulas.complete" :key="formula.id">
-                    <n-card hoverable>
-                      <template #header>
-                        <n-space justify="space-between">
-                          <span>{{ formula.name }}</span>
-                          <n-space>
-                            <n-tag type="success" size="small">完整</n-tag>
-                            <n-tag type="info" size="small">{{ pillGrades[formula.grade].name }}</n-tag>
-                            <n-tag type="warning" size="small">{{ pillTypes[formula.type].name }}</n-tag>
-                          </n-space>
-                        </n-space>
-                      </template>
-                      <p>{{ formula.description }}</p>
-                    </n-card>
-                  </n-grid-item>
-                </n-grid>
-                <n-empty v-else />
-              </n-tab-pane>
-              <n-tab-pane name="incomplete" tab="残缺丹方">
-                <n-grid :cols="2" :x-gap="12" :y-gap="8" v-if="groupedFormulas.incomplete.length">
-                  <n-grid-item v-for="formula in groupedFormulas.incomplete" :key="formula.id">
-                    <n-card hoverable>
-                      <template #header>
-                        <n-space justify="space-between">
-                          <span>{{ formula.name }}</span>
-                          <n-space>
-                            <n-tag type="warning" size="small">残缺</n-tag>
-                            <n-tag type="info" size="small">{{ pillGrades[formula.grade].name }}</n-tag>
-                            <n-tag type="warning" size="small">{{ pillTypes[formula.type].name }}</n-tag>
-                          </n-space>
-                        </n-space>
-                      </template>
-                      <p>{{ formula.description }}</p>
-                      <n-progress
-                        type="line"
-                        :percentage="Number(((formula.fragments / formula.fragmentsNeeded) * 100).toFixed(2))"
-                        :show-indicator="true"
-                        indicator-placement="inside"
-                      >
-                        收集进度: {{ formula.fragments }}/{{ formula.fragmentsNeeded }}
-                      </n-progress>
-                    </n-card>
-                  </n-grid-item>
-                </n-grid>
-                <n-empty v-else />
-              </n-tab-pane>
-            </n-tabs>
-          </n-tab-pane>
-          <n-tab-pane name="pets" tab="灵宠">
-            <n-space style="margin-bottom: 16px">
-              <n-select
-                v-model:value="selectedRarityToRelease"
-                :options="options"
-                placeholder="选择放生品阶"
-                style="width: 150px"
-              />
-              <n-button
-                @click="showBatchReleaseConfirm = true"
-                :disabled="!playerStore.items.filter(item => item.type === 'pet').length"
-              >
-                一键放生
-              </n-button>
-            </n-space>
-            <n-modal v-model:show="showBatchReleaseConfirm" preset="dialog" title="批量放生确认" style="width: min(600px, calc(100vw - 20px))">
-              <p>
-                确定要放生{{
-                  selectedRarityToRelease === 'all' ? '所有' : petRarities[selectedRarityToRelease].name
-                }}品阶的未出战灵宠吗？此操作不可撤销。
-              </p>
-              <n-space justify="end" style="margin-top: 16px">
-                <n-button size="small" @click="showBatchReleaseConfirm = false">取消</n-button>
-                <n-button size="small" type="error" @click="batchReleasePets">确认放生</n-button>
-              </n-space>
-            </n-modal>
-            <n-pagination
-              v-if="filteredPets.length > 12"
-              v-model:page="currentPage"
-              :page-size="pageSize"
-              :item-count="filteredPets.length"
-              @update:page-size="onPageSizeChange"
-              :page-slot="7"
+            </div>
+
+            <div class="slot-column center">
+              <div class="character-silhouette">
+                <!-- 修仙者剪影或立绘 -->
+                <div class="silhouette-placeholder">
+                  <n-icon size="120" color="var(--panel-border)"><PersonOutline /></n-icon>
+                </div>
+              </div>
+              <!-- 法宝/特殊位 -->
+              <div class="item-slot-wrapper artifact-slot">
+                <div 
+                  class="item-slot" 
+                  :class="[getSlotQualityClass('artifact'), { 'is-empty': !playerStore.equippedArtifacts.artifact }]"
+                  @click="handleSlotClick('artifact')"
+                >
+                  <div class="slot-placeholder" v-if="!playerStore.equippedArtifacts.artifact">法</div>
+                  <div class="slot-label">法宝</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="slot-column right">
+              <div v-for="slot in rightSlots" :key="slot" class="item-slot-wrapper">
+                <div 
+                  class="item-slot" 
+                  :class="[getSlotQualityClass(slot), { 'is-empty': !playerStore.equippedArtifacts[slot] }]"
+                  @click="handleSlotClick(slot)"
+                >
+                  <div class="slot-placeholder" v-if="!playerStore.equippedArtifacts[slot]">
+                    {{ equipmentTypes[slot].slice(0, 1) }}
+                  </div>
+                  <div class="slot-mark" v-else>{{ equipmentTypes[slot].slice(0, 1) }}</div>
+                  <div class="slot-label">{{ equipmentTypes[slot] }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 强化材料统计 -->
+        <div class="material-stats">
+          <div class="m-item">
+            <span class="label">强化石</span>
+            <strong class="value">{{ formatNumber(playerStore.reinforceStones) }}</strong>
+          </div>
+          <div class="m-item">
+            <span class="label">洗练石</span>
+            <strong class="value">{{ formatNumber(playerStore.refinementStones) }}</strong>
+          </div>
+          <div class="m-item">
+            <span class="label">灵宠精华</span>
+            <strong class="value">{{ formatNumber(playerStore.petEssence) }}</strong>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 右侧：物品网格 -->
+      <main class="bag-section">
+        <div class="bag-header">
+          <div class="bag-info">
+            容量：{{ playerStore.items.length }} / 500
+          </div>
+          <div class="bag-actions">
+            <n-button size="small" quaternary @click="openBatchSellConfirm" v-if="activeCategory === 'equipment'">
+              批量分解
+            </n-button>
+            <n-select 
+              v-model:value="selectedQuality" 
+              :options="qualityOptions" 
+              size="small" 
+              style="width: 100px"
+              v-if="activeCategory === 'equipment'"
             />
-            <n-grid v-if="displayPets.length" :cols="2" :x-gap="12" :y-gap="8" style="margin-top: 16px">
-              <n-grid-item v-for="pet in displayPets" :key="pet.id">
-                <n-card hoverable>
-                  <template #header>
-                    <n-space justify="space-between">
-                      <span>{{ pet.name }}</span>
-                      <n-button size="small" type="primary" @click="useItem(pet)">
-                        {{ playerStore.activePet?.id === pet.id ? '召回' : '出战' }}
-                      </n-button>
-                    </n-space>
-                  </template>
-                  <p>{{ pet.description }}</p>
-                  <n-space vertical>
-                    <n-tag :style="{ color: petRarities[pet.rarity].color }">
-                      {{ petRarities[pet.rarity].name }}
-                    </n-tag>
-                    <n-space justify="space-between">
-                      <n-text>等级: {{ pet.level || 1 }}</n-text>
-                      <n-text>星级: {{ pet.star || 0 }}</n-text>
-                      <n-space>
-                        <n-button size="small" type="info" @click="quickListAuction(pet)">上架拍卖</n-button>
-                        <n-button size="small" @click="showPetDetails(pet)">详情</n-button>
-                      </n-space>
-                    </n-space>
-                  </n-space>
-                </n-card>
-              </n-grid-item>
-            </n-grid>
-            <n-empty v-else />
-          </n-tab-pane>
-      </n-tabs>
-    </n-card>
-  </section>
-  <!-- 灵宠详情弹窗 -->
-  <n-modal v-model:show="showPetModal" preset="dialog" title="灵宠详情" style="width: min(600px, calc(100vw - 20px))">
-    <template v-if="selectedPet">
-      <n-descriptions bordered>
-        <n-descriptions-item label="名称">{{ selectedPet.name }}</n-descriptions-item>
-        <n-descriptions-item label="品质">
-          <n-tag :style="{ color: petRarities[selectedPet.rarity].color }">
-            {{ petRarities[selectedPet.rarity].name }}
-          </n-tag>
-        </n-descriptions-item>
-        <n-descriptions-item label="等级">{{ selectedPet.level || 1 }}</n-descriptions-item>
-        <n-descriptions-item label="星级">{{ selectedPet.star || 0 }}</n-descriptions-item>
-        <n-descriptions-item label="境界">{{ Math.floor((selectedPet.star || 0) / 5) }}阶</n-descriptions-item>
-      </n-descriptions>
-      <n-divider>属性加成</n-divider>
-      <n-descriptions bordered>
-        <n-descriptions-item label="攻击加成">
-          +{{ (getPetBonus(selectedPet).attack * 100).toFixed(1) }}%
-        </n-descriptions-item>
-        <n-descriptions-item label="防御加成">
-          +{{ (getPetBonus(selectedPet).defense * 100).toFixed(1) }}%
-        </n-descriptions-item>
-        <n-descriptions-item label="生命加成">
-          +{{ (getPetBonus(selectedPet).health * 100).toFixed(1) }}%
-        </n-descriptions-item>
-      </n-descriptions>
-      <n-divider>灵宠属性</n-divider>
-      <n-collapse>
-        <n-collapse-item title="展开" name="1">
-          <n-divider>基础属性</n-divider>
-          <n-descriptions bordered :column="2">
-            <n-descriptions-item label="攻击力">{{ selectedPet.combatAttributes?.attack || 0 }}</n-descriptions-item>
-            <n-descriptions-item label="生命值">{{ selectedPet.combatAttributes?.health || 0 }}</n-descriptions-item>
-            <n-descriptions-item label="防御力">{{ selectedPet.combatAttributes?.defense || 0 }}</n-descriptions-item>
-            <n-descriptions-item label="速度">{{ selectedPet.combatAttributes?.speed || 0 }}</n-descriptions-item>
-          </n-descriptions>
-          <n-divider>战斗属性</n-divider>
-          <n-descriptions bordered :column="3">
-            <n-descriptions-item label="暴击率">
-              {{ ((selectedPet.combatAttributes?.critRate || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="连击率">
-              {{ ((selectedPet.combatAttributes?.comboRate || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="反击率">
-              {{ ((selectedPet.combatAttributes?.counterRate || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="眩晕率">
-              {{ ((selectedPet.combatAttributes?.stunRate || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="闪避率">
-              {{ ((selectedPet.combatAttributes?.dodgeRate || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="吸血率">
-              {{ ((selectedPet.combatAttributes?.vampireRate || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-          </n-descriptions>
-          <n-divider>战斗抗性</n-divider>
-          <n-descriptions bordered :column="3">
-            <n-descriptions-item label="抗暴击">
-              {{ ((selectedPet.combatAttributes?.critResist || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="抗连击">
-              {{ ((selectedPet.combatAttributes?.comboResist || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="抗反击">
-              {{ ((selectedPet.combatAttributes?.counterResist || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="抗眩晕">
-              {{ ((selectedPet.combatAttributes?.stunResist || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="抗闪避">
-              {{ ((selectedPet.combatAttributes?.dodgeResist || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="抗吸血">
-              {{ ((selectedPet.combatAttributes?.vampireResist || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-          </n-descriptions>
-          <n-divider>特殊属性</n-divider>
-          <n-descriptions bordered :column="3">
-            <n-descriptions-item label="强化治疗">
-              {{ ((selectedPet.combatAttributes?.healBoost || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="强化爆伤">
-              {{ ((selectedPet.combatAttributes?.critDamageBoost || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="弱化爆伤">
-              {{ ((selectedPet.combatAttributes?.critDamageReduce || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="最终增伤">
-              {{ ((selectedPet.combatAttributes?.finalDamageBoost || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="最终减伤">
-              {{ ((selectedPet.combatAttributes?.finalDamageReduce || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="战斗属性提升">
-              {{ ((selectedPet.combatAttributes?.combatBoost || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-            <n-descriptions-item label="战斗抗性提升">
-              {{ ((selectedPet.combatAttributes?.resistanceBoost || 0) * 100).toFixed(1) }}%
-            </n-descriptions-item>
-          </n-descriptions>
-        </n-collapse-item>
-      </n-collapse>
-      <n-divider>操作</n-divider>
-      <n-space vertical>
-        <n-space justify="space-between">
-          <span>升级（消耗{{ getUpgradeCost(selectedPet) }} / {{ playerStore.petEssence }}灵宠精华）</span>
-          <n-button size="small" type="primary" @click="upgradePet(selectedPet)" :disabled="!canUpgrade(selectedPet)">
-            升级
-          </n-button>
-        </n-space>
-        <n-space justify="space-between">
-          <span>升星（需要相同品质和名字的灵宠）</span>
-          <n-select
-            v-model:value="selectedFoodPet"
-            :options="getAvailableFoodPets(selectedPet)"
-            placeholder="选择升星材料"
-            style="width: 200px"
-          />
-          <n-button size="small" type="warning" @click="evolvePet(selectedPet)" :disabled="!selectedFoodPet">
-            升星
-          </n-button>
-        </n-space>
-        <n-space justify="space-between">
-          <span>上架坊市（固定价）</span>
-          <n-button size="small" type="info" @click="quickListAuction(selectedPet)">上架拍卖</n-button>
-        </n-space>
-        <n-space justify="space-between">
-          <span>放生灵宠（不会返还已消耗的道具）</span>
-          <n-button size="small" type="error" @click="confirmReleasePet(selectedPet)">放生灵宠</n-button>
-          <n-modal v-model:show="showReleaseConfirm" preset="dialog" title="灵宠放生" style="width: min(600px, calc(100vw - 20px))">
-            <template v-if="petToRelease">
-              <p>确定要放生 {{ petToRelease.name }} 吗？此操作不可撤销，且不会返还已消耗的道具。</p>
-              <n-space justify="end" style="margin-top: 16px">
-                <n-button size="small" @click="cancelReleasePet">取消</n-button>
-                <n-button size="small" type="error" @click="releasePet">确认放生</n-button>
-              </n-space>
-            </template>
-          </n-modal>
-        </n-space>
-      </n-space>
-    </template>
-  </n-modal>
-  <!-- 装备详情弹窗 -->
-  <n-modal v-model:show="showEquipmentDetailModal" preset="dialog" :title="selectedEquipment?.name || '装备详情'">
-    <n-descriptions bordered>
-      <n-descriptions-item label="品质">
-        <span :style="{ color: selectedEquipment?.qualityInfo.color }">
-          {{ selectedEquipment?.qualityInfo.name }}
-        </span>
-      </n-descriptions-item>
-      <n-descriptions-item label="类型">
-        {{ equipmentTypes[selectedEquipment?.type] }}
-      </n-descriptions-item>
-      <n-descriptions-item label="强化等级">+{{ selectedEquipment?.enhanceLevel || 0 }}</n-descriptions-item>
-      <template v-if="selectedEquipment?.stats">
-        <n-descriptions-item v-for="(value, stat) in selectedEquipment.stats" :key="stat" :label="getStatName(stat)">
-          {{ formatStatValue(stat, value) }}
-        </n-descriptions-item>
-      </template>
-    </n-descriptions>
-    <div
-      class="stats-comparison"
-      v-if="equipmentComparison && selectedEquipment?.id != playerStore.equippedArtifacts[selectedEquipment?.slot]?.id"
-    >
-      <n-divider>属性对比</n-divider>
-      <n-table :bordered="false" :single-line="false">
-        <thead>
-          <tr>
-            <th>属性</th>
-            <th>当前装备</th>
-            <th>选中装备</th>
-            <th>属性变化</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(comparison, stat) in equipmentComparison" :key="stat">
-            <td>{{ getStatName(stat) }}</td>
-            <td>{{ formatStatValue(stat, comparison.current) }}</td>
-            <td>{{ formatStatValue(stat, comparison.selected) }}</td>
-            <td>
-              <n-gradient-text :type="comparison.isPositive ? 'success' : 'error'">
-                {{ comparison.isPositive ? '+' : '' }}{{ formatStatValue(stat, comparison.diff) }}
-              </n-gradient-text>
-            </td>
-          </tr>
-        </tbody>
-      </n-table>
+          </div>
+        </div>
+
+        <n-scrollbar class="grid-scrollbar">
+          <div class="item-grid">
+            <!-- 物品格子 -->
+            <div 
+              v-for="item in filteredBagList" 
+              :key="item.id" 
+              class="grid-item"
+              :class="[getItemQualityClass(item), { 'is-equipped': isItemEquipped(item) }]"
+              @click="showItemDetails(item)"
+            >
+              <div class="item-icon-wrap">
+                <div class="item-mark" v-if="item.type === 'pet'">宠</div>
+                <div class="item-mark" v-else-if="item.type === 'pill'">丹</div>
+                <div class="item-mark" v-else>{{ equipmentTypes[item.type]?.slice(0, 1) }}</div>
+                
+                <div class="item-count" v-if="item.count > 1">{{ item.count }}</div>
+                <div class="item-enhance" v-if="item.enhanceLevel > 0">+{{ item.enhanceLevel }}</div>
+              </div>
+              <div class="item-name">{{ item.name }}</div>
+              <div class="equipped-badge" v-if="isItemEquipped(item)">已装备</div>
+            </div>
+            
+            <!-- 空格子填充，保持对齐 -->
+            <div v-for="i in emptyGridFill" :key="'empty-' + i" class="grid-item is-empty"></div>
+          </div>
+          <n-empty v-if="filteredBagList.length === 0" description="袋中空空如也" style="padding: 40px 0" />
+        </n-scrollbar>
+      </main>
     </div>
-    <template #action>
-      <n-space justify="space-between">
-        <n-space>
-          <n-button
-            type="primary"
-            @click="showEnhanceConfirm = true"
-            :disabled="(selectedEquipment?.enhanceLevel || 0) >= 100"
-          >
-            强化
-          </n-button>
-          <n-button type="info" :disabled="playerStore.refinementStones === 0" @click="handleReforgeEquipment">
-            洗练
-          </n-button>
-        </n-space>
-        <n-space>
-          <n-button
-            @click="equipItem(selectedEquipment)"
-            :disabled="playerStore.level < selectedEquipment?.requiredRealm"
-            v-if="selectedEquipment?.id != playerStore.equippedArtifacts[selectedEquipment?.slot]?.id"
-          >
-            装备
-          </n-button>
-          <n-button
-            @click="unequipItem(selectedEquipment?.slot)"
-            :disabled="playerStore.level < selectedEquipment?.requiredRealm"
-            v-else
-          >
-            卸下
-          </n-button>
-          <n-button
-            type="info"
-            @click="quickListAuction(selectedEquipment)"
-            v-if="selectedEquipment?.id != playerStore.equippedArtifacts[selectedEquipment?.slot]?.id"
-          >
-            上架拍卖
-          </n-button>
-          <n-button
-            type="error"
-            @click="confirmSellEquipment(selectedEquipment)"
-            v-if="selectedEquipment?.id != playerStore.equippedArtifacts[selectedEquipment?.slot]?.id"
-          >
-            出售
-          </n-button>
-        </n-space>
-      </n-space>
-    </template>
-  </n-modal>
-  <!-- 强化确认弹窗 -->
-  <n-modal v-model:show="showEnhanceConfirm" preset="dialog" title="装备强化" style="width: min(640px, calc(100vw - 20px))">
-    <n-space vertical>
-      <p>是否消耗 {{ ((selectedEquipment?.enhanceLevel || 0) + 1) * 10 }} 强化石强化装备？</p>
-      <p>当前强化石数量：{{ playerStore.reinforceStones }}</p>
-    </n-space>
-    <template #action>
-      <n-space justify="end">
-        <n-button @click="showEnhanceConfirm = false">取消</n-button>
-        <n-button
-          type="primary"
-          @click="handleEnhanceEquipment"
-          :disabled="playerStore.reinforceStones < ((selectedEquipment?.enhanceLevel || 0) + 1) * 10"
-        >
+
+    <!-- 物品详情侧边抽屉 -->
+    <n-drawer v-model:show="showDetailDrawer" :width="min(450, '100%')" placement="right" class="detail-drawer">
+      <n-drawer-content closable>
+        <template #header>
+          <div class="detail-header" v-if="selectedItem">
+            <div class="detail-title-row">
+              <h3 :style="{ color: getItemQualityColor(selectedItem) }">{{ selectedItem.name }}</h3>
+              <n-tag :bordered="false" :color="{ textColor: getItemQualityColor(selectedItem), color: 'transparent' }">
+                {{ getItemQualityName(selectedItem) }}
+              </n-tag>
+            </div>
+            <div class="detail-meta">
+              <span v-if="selectedItem.type === 'pet'">灵宠</span>
+              <span v-else-if="selectedItem.type === 'pill'">丹药</span>
+              <span v-else>装备 / {{ equipmentTypes[selectedItem.type] }}</span>
+              <span class="realm-req" :class="{ 'is-met': playerStore.level >= (selectedItem.requiredRealm || 0) }">
+                需求：{{ getRealmName(selectedItem.requiredRealm || 0).name }}
+              </span>
+            </div>
+          </div>
+        </template>
+
+        <div class="detail-content" v-if="selectedItem">
+          <p class="item-description">{{ selectedItem.description }}</p>
+
+          <!-- 装备属性 -->
+          <div class="item-stats-section" v-if="selectedItem.stats">
+            <div class="section-title">附加属性</div>
+            <div class="stats-grid">
+              <div v-for="(val, key) in selectedItem.stats" :key="key" class="stat-row">
+                <span class="s-label">{{ getStatName(key) }}</span>
+                <span class="s-value">+{{ formatStatValue(key, val) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 装备对比 -->
+          <div class="comparison-section" v-if="itemComparison">
+            <div class="section-title">属性对比</div>
+            <div class="comp-table">
+              <div v-for="(comp, key) in itemComparison" :key="key" class="comp-row">
+                <span class="c-label">{{ getStatName(key) }}</span>
+                <div class="c-vals">
+                  <span class="c-current">{{ formatStatValue(key, comp.current) }}</span>
+                  <n-icon><ArrowForwardOutline /></n-icon>
+                  <span class="c-next" :class="comp.isPositive ? 'text-success' : 'text-error'">
+                    {{ formatStatValue(key, comp.selected) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 灵宠专属 -->
+          <div class="pet-section" v-if="selectedItem.type === 'pet'">
+            <div class="section-title">修为加成</div>
+            <n-descriptions bordered size="small" :column="1">
+              <n-descriptions-item label="等级 / 星级">{{ selectedItem.level || 1 }}级 / {{ selectedItem.star || 0 }}星</n-descriptions-item>
+              <n-descriptions-item label="攻击加成">+{{ (getPetBonus(selectedItem).attack * 100).toFixed(1) }}%</n-descriptions-item>
+              <n-descriptions-item label="防御加成">+{{ (getPetBonus(selectedItem).defense * 100).toFixed(1) }}%</n-descriptions-item>
+            </n-descriptions>
+          </div>
+        </div>
+
+        <template #footer>
+          <div class="detail-footer" v-if="selectedItem">
+            <n-space justify="end">
+              <!-- 装备操作 -->
+              <template v-if="isEquipment(selectedItem)">
+                <n-button type="primary" @click="handleEquip(selectedItem)" v-if="!isItemEquipped(selectedItem)">装备</n-button>
+                <n-button type="warning" @click="handleUnequip(selectedItem.type)" v-else>卸下</n-button>
+                <n-button secondary type="info" @click="openEnhanceModal">强化</n-button>
+                <n-button secondary type="info" @click="handleReforge">洗练</n-button>
+                <n-button secondary type="warning" @click="handleQuickAuction">上架</n-button>
+                <n-button secondary type="error" @click="confirmSellEquipment(selectedItem)">出售</n-button>
+              </template>
+
+              <!-- 丹药操作 -->
+              <template v-else-if="selectedItem.type === 'pill'">
+                <n-button type="primary" @click="usePill(selectedItem)">服用</n-button>
+              </template>
+
+              <!-- 灵宠操作 -->
+              <template v-else-if="selectedItem.type === 'pet'">
+                <n-button type="primary" @click="useItem(selectedItem)">
+                  {{ playerStore.activePet?.id === selectedItem.id ? '召回' : '出战' }}
+                </n-button>
+                <n-button secondary type="info" @click="showPetModal = true">养成</n-button>
+                <n-button secondary type="error" @click="confirmReleasePet(selectedItem)">放生</n-button>
+              </template>
+            </n-space>
+          </div>
+        </template>
+      </n-drawer-content>
+    </n-drawer>
+
+    <!-- 原有功能的 Modals 保持不变，但视觉微调 -->
+    <!-- 灵宠养成、强化确认、批量出售等 Modal... -->
+    <n-modal v-model:show="showEnhanceModal" preset="dialog" title="装备强化" class="custom-modal">
+      <div class="enhance-modal-body" v-if="selectedItem">
+        <p>消耗 <strong class="text-primary">{{ ((selectedItem.enhanceLevel || 0) + 1) * 10 }}</strong> 强化石</p>
+        <p>当前拥有：{{ playerStore.reinforceStones }}</p>
+      </div>
+      <template #action>
+        <n-button @click="showEnhanceModal = false">取消</n-button>
+        <n-button type="primary" @click="doEnhance" :disabled="playerStore.reinforceStones < ((selectedItem?.enhanceLevel || 0) + 1) * 10">
           确认强化
         </n-button>
-      </n-space>
-    </template>
-  </n-modal>
-  <!-- 洗练确认弹窗 -->
-  <n-modal v-model:show="showReforgeConfirm" preset="dialog" title="洗练结果确认" style="width: min(640px, calc(100vw - 20px))">
-    <template v-if="reforgeResult">
-      <div class="reforge-compare">
-        <div class="old-stats">
-          <h3>原始属性</h3>
-          <div v-for="(value, key) in reforgeResult.oldStats" :key="key">
-            {{ getStatName(key) }}: {{ formatStatValue(key, value) }}
-          </div>
-        </div>
-        <div class="new-stats">
-          <h3>新属性</h3>
-          <div v-for="(value, key) in reforgeResult.newStats" :key="key">
-            {{ getStatName(key) }}: {{ formatStatValue(key, value) }}
-          </div>
-        </div>
-      </div>
-    </template>
-    <template #action>
-      <n-button type="primary" @click="confirmReforgeResult(true)">确认新属性</n-button>
-      <n-button @click="confirmReforgeResult(false)">保留原属性</n-button>
-    </template>
-  </n-modal>
-  <n-modal v-model:show="showAuctionListConfirm" preset="dialog" title="上架坊市确认" style="width: min(520px, calc(100vw - 20px))">
-    <template v-if="auctionListingItem">
-      <n-space vertical :size="12">
-        <n-descriptions bordered :column="1">
-          <n-descriptions-item label="物品名称">
-            {{ auctionListingItem.name || '未知物品' }}
-          </n-descriptions-item>
-          <n-descriptions-item label="物品类型">
-            {{ getAuctionListingTypeName(auctionListingItem) }}
-          </n-descriptions-item>
-          <n-descriptions-item label="推荐价格">
-            {{ defaultAuctionPrice(auctionListingItem) }} 灵石
-          </n-descriptions-item>
-        </n-descriptions>
-        <n-input-number
-          v-model:value="auctionListingPrice"
-          :min="1"
-          :step="10"
-          placeholder="请输入上架价格(灵石)"
-          style="width: 100%"
-        />
-      </n-space>
-    </template>
-    <template #action>
-      <n-space justify="end">
-        <n-button @click="cancelAuctionListing">取消</n-button>
-        <n-button
-          type="primary"
-          :loading="auctionListingSubmitting"
-          :disabled="!auctionListingItem || !auctionListingPrice || auctionListingPrice <= 0"
-          @click="confirmAuctionListing"
-        >
-          确认上架
-        </n-button>
-      </n-space>
-    </template>
-  </n-modal>
+      </template>
+    </n-modal>
 
-  <n-modal v-model:show="showSingleSellConfirm" preset="dialog" title="确认出售装备" style="width: min(520px, calc(100vw - 20px))">
-    <template v-if="equipmentToSell">
-      <n-space vertical>
-        <n-alert type="warning" :show-icon="false">出售后不可恢复，请确认不是想保留、强化或上架的装备。</n-alert>
-        <n-descriptions bordered :column="1">
-          <n-descriptions-item label="装备名称">{{ equipmentToSell.name }}</n-descriptions-item>
-          <n-descriptions-item label="装备品质">{{ equipmentToSell.qualityInfo?.name || '未知品质' }}</n-descriptions-item>
-          <n-descriptions-item label="出售收益">{{ getSellPrice(equipmentToSell) }} 强化石</n-descriptions-item>
-        </n-descriptions>
-      </n-space>
-    </template>
-    <template #action>
-      <n-space justify="end">
-        <n-button @click="cancelSellEquipment">取消</n-button>
-        <n-button type="error" @click="sellEquipmentConfirmed">确认出售</n-button>
-      </n-space>
-    </template>
-  </n-modal>
+    <!-- 其它原有的 Modal 逻辑... -->
+    <n-modal v-model:show="showPetModal" preset="dialog" title="灵宠养成" style="width: 600px">
+       <div v-if="selectedItem" class="pet-upgrade-area">
+          <n-tabs type="segment">
+            <n-tab-pane name="level" tab="升级">
+               <n-space vertical align="center" style="padding: 20px 0">
+                  <n-text>消耗 {{ getUpgradeCost(selectedItem) }} 灵宠精华</n-text>
+                  <n-button type="primary" @click="upgradePet(selectedItem)" :disabled="!canUpgrade(selectedItem)">
+                    提升等级
+                  </n-button>
+               </n-space>
+            </n-tab-pane>
+            <n-tab-pane name="star" tab="升星">
+               <n-space vertical>
+                  <n-select v-model:value="selectedFoodPet" :options="getAvailableFoodPets(selectedItem)" placeholder="选择同名同品质灵宠" />
+                  <n-button block type="warning" @click="evolvePet(selectedItem)" :disabled="!selectedFoodPet">
+                    提升星级
+                  </n-button>
+               </n-space>
+            </n-tab-pane>
+          </n-tabs>
+       </div>
+    </n-modal>
 
-  <n-modal v-model:show="showBatchSellConfirm" preset="dialog" title="确认批量出售装备" style="width: min(560px, calc(100vw - 20px))">
-    <n-space vertical>
-      <n-alert type="warning" :show-icon="false">将批量出售当前筛选结果中的所有装备，请谨慎操作。</n-alert>
-      <n-descriptions bordered :column="1">
-        <n-descriptions-item label="部位筛选">{{ equipmentTypes[selectedEquipmentType] || '未选择' }}</n-descriptions-item>
-        <n-descriptions-item label="品质筛选">{{ currentQualityLabel }}</n-descriptions-item>
-        <n-descriptions-item label="装备数量">{{ filteredEquipmentList.length }}</n-descriptions-item>
-      </n-descriptions>
-    </n-space>
-    <template #action>
-      <n-space justify="end">
+    <n-modal v-model:show="showBatchSellConfirm" preset="dialog" title="批量分解装备">
+      <p>确定要分解所有选中的 <strong class="text-error">{{ filteredBagList.length }}</strong> 件装备吗？</p>
+      <template #action>
         <n-button @click="showBatchSellConfirm = false">取消</n-button>
-        <n-button type="error" @click="batchSellEquipments">确认批量出售</n-button>
+        <n-button type="error" @click="batchSellEquipments">确认分解</n-button>
+      </template>
+    </n-modal>
+
+    <!-- 拍卖行上架确认 -->
+    <n-modal v-model:show="showAuctionListConfirm" preset="dialog" title="上架坊市">
+      <n-space vertical v-if="selectedItem">
+        <n-input-number v-model:value="auctionListingPrice" :min="1" placeholder="设定灵石价格" style="width: 100%" />
+        <n-text depth="3">推荐价格：{{ defaultAuctionPrice(selectedItem) }} 灵石</n-text>
       </n-space>
-    </template>
-  </n-modal>
+      <template #action>
+        <n-button @click="showAuctionListConfirm = false">取消</n-button>
+        <n-button type="primary" @click="confirmAuctionListing">确认上架</n-button>
+      </template>
+    </n-modal>
+  </div>
 </template>
 
 <script setup>
+  import { ref, computed, onMounted } from 'vue'
   import { usePlayerStore } from '../stores/player'
-  import { ref, computed } from 'vue'
   import { useMessage } from 'naive-ui'
+  import { 
+    PersonOutline, 
+    WalletOutline, 
+    ArrowForwardOutline,
+    ShieldCheckmarkOutline
+  } from '@vicons/ionicons5'
   import { getStatName, formatStatValue } from '../plugins/stats'
   import { getRealmName } from '../plugins/realm'
-  import { pillRecipes, pillGrades, pillTypes, calculatePillEffect } from '../plugins/pills'
   import { createAuctionOrder } from '../api/modules/auction'
   import {
     inventorySellEquipment,
     inventoryBatchSellEquipment,
     inventoryReleasePet,
-    inventoryBatchReleasePets,
     inventoryUpgradePet,
     inventoryEvolvePet,
     gameUseItem,
@@ -622,937 +342,498 @@
     inventoryReforgeEquipment
   } from '../api/modules/game'
 
-  // 分页相关
-  const currentPage = ref(1)
-  const pageSize = ref(12)
-
-  // 过滤后的灵宠列表
-  const filteredPets = computed(() => {
-    const pets = playerStore.items.filter(item => item.type === 'pet')
-    if (selectedRarityToRelease.value === 'all') {
-      return pets
-    }
-    return pets.filter(pet => pet.rarity === selectedRarityToRelease.value)
-  })
-
-  // 当前页显示的灵宠
-  const displayPets = computed(() => {
-    const start = (currentPage.value - 1) * pageSize.value
-    const end = start + pageSize.value
-    return filteredPets.value.slice(start, end)
-  })
-
-  // 页大小改变处理
-  const onPageSizeChange = size => {
-    pageSize.value = size
-    currentPage.value = 1
-  }
-
   const playerStore = usePlayerStore()
   const message = useMessage()
 
-  const findItemById = itemId => playerStore.items.find(item => String(item.id) === String(itemId))
-
-  const syncSelectionAfterSnapshot = () => {
-    if (selectedPet.value) {
-      const latestPet = findItemById(selectedPet.value.id)
-      selectedPet.value = latestPet || null
-      if (!latestPet) {
-        showPetModal.value = false
-      }
-    }
-    if (selectedEquipment.value) {
-      const latestEquipment = findItemById(selectedEquipment.value.id)
-      selectedEquipment.value = latestEquipment || null
-      if (!latestEquipment) {
-        showEquipmentDetailModal.value = false
-      }
-    }
-  }
-
-  const applyServerInventoryResult = result => {
-    if (result?.snapshot) {
-      playerStore.applyServerSnapshot(result.snapshot)
-      syncSelectionAfterSnapshot()
-    }
-  }
-
-  // 使用丹药
-  const usePill = async pill => {
-    try {
-      const result = await gameUseItem(String(pill.id))
-      applyServerInventoryResult(result)
-      message.success(result?.message || '使用丹药成功')
-    } catch (error) {
-      const code = error?.payload?.error
-      if (code === 'inventory item not found') {
-        message.error('丹药不存在，可能已被处理')
-      } else if (code === 'invalid inventory item type') {
-        message.error('目标不是丹药，无法服用')
-      } else {
-        message.error(error?.message || '使用丹药失败')
-      }
-    }
-  }
-
-  // 灵宠品质配置
-  const petRarities = {
-    divine: {
-      name: '神品',
-      color: '#FF0000',
-      probability: 0.02,
-      essenceBonus: 50
-    },
-    celestial: {
-      name: '仙品',
-      color: '#FFD700',
-      probability: 0.08,
-      essenceBonus: 30
-    },
-    mystic: {
-      name: '玄品',
-      color: '#9932CC',
-      probability: 0.15,
-      essenceBonus: 20
-    },
-    spiritual: {
-      name: '灵品',
-      color: '#1E90FF',
-      probability: 0.25,
-      essenceBonus: 10
-    },
-    mortal: {
-      name: '凡品',
-      color: '#32CD32',
-      probability: 0.5,
-      essenceBonus: 5
-    }
-  }
-
-  // 灵宠详情相关
+  // 状态
+  const activeCategory = ref('equipment')
+  const selectedQuality = ref('all')
+  const showDetailDrawer = ref(false)
+  const selectedItem = ref(null)
+  const showEnhanceModal = ref(false)
   const showPetModal = ref(false)
-  const selectedPet = ref(null)
+  const showBatchSellConfirm = ref(false)
+  const showAuctionListConfirm = ref(false)
+  const auctionListingPrice = ref(100)
   const selectedFoodPet = ref(null)
 
-  // 放生确认弹窗
-  const showReleaseConfirm = ref(false)
-  const showBatchReleaseConfirm = ref(false)
-  const petToRelease = ref(null)
+  // 常量配置
+  const categories = [
+    { label: '装备', key: 'equipment' },
+    { label: '灵宠', key: 'pet' },
+    { label: '丹药', key: 'pill' },
+    { label: '素材', key: 'material' }
+  ]
 
-  // 显示放生确认弹窗
-  const confirmReleasePet = pet => {
-    petToRelease.value = pet
-    showReleaseConfirm.value = true
-  }
-
-  // 取消放生
-  const cancelReleasePet = () => {
-    petToRelease.value = null
-    showReleaseConfirm.value = false
-  }
-
-  // 执行放生
-  const releasePet = async () => {
-    if (!petToRelease.value) return
-
-    try {
-      const result = await inventoryReleasePet(String(petToRelease.value.id))
-      applyServerInventoryResult(result)
-      message.success(result?.message || '已放生灵宠')
-    } catch (error) {
-      const code = error?.payload?.error
-      if (code === 'inventory item not found') {
-        message.error('灵宠不存在，可能已被处理')
-      } else if (code === 'invalid inventory item type') {
-        message.error('目标不是灵宠，无法放生')
-      } else {
-        message.error(error?.message || '放生失败')
-      }
-    }
-    // 关闭所有相关弹窗
-    showReleaseConfirm.value = false
-    showPetModal.value = false
-    petToRelease.value = null
-  }
-
-  // 选中的放生品阶
-  const selectedRarityToRelease = ref('all')
-  const showAuctionListConfirm = ref(false)
-  const auctionListingItem = ref(null)
-  const auctionListingPrice = ref(100)
-  const auctionListingSubmitting = ref(false)
-
-  // 批量放生函数
-  const batchReleasePets = async () => {
-    try {
-      const result = await inventoryBatchReleasePets(selectedRarityToRelease.value)
-      applyServerInventoryResult(result)
-      message.success(
-        result?.message ||
-          `已放生${selectedRarityToRelease.value === 'all' ? '所有' : petRarities[selectedRarityToRelease.value].name}品阶灵宠`
-      )
-    } catch (error) {
-      const code = error?.payload?.error
-      if (code === 'invalid rarity') {
-        message.error('放生品阶参数无效')
-      } else {
-        message.error(error?.message || '批量放生失败')
-      }
-    }
-    showBatchReleaseConfirm.value = false
-  }
-
-  // 显示灵宠详情
-  const showPetDetails = pet => {
-    selectedPet.value = pet
-    selectedFoodPet.value = null
-    showPetModal.value = true
-  }
-
-  // 计算灵宠属性加成
-  const getPetBonus = pet => {
-    if (!pet) return { attack: 0, defense: 0, health: 0 }
-    const qualityBonusMap = {
-      divine: 0.5,
-      celestial: 0.3,
-      mystic: 0.2,
-      spiritual: 0.1,
-      mortal: 0.05
-    }
-    const starBonusPerQuality = {
-      divine: 0.1,
-      celestial: 0.08,
-      mystic: 0.06,
-      spiritual: 0.04,
-      mortal: 0.02
-    }
-    const baseBonus = qualityBonusMap[pet.rarity] || 0.05
-    const starBonus = (pet.star || 0) * (starBonusPerQuality[pet.rarity] || 0.02)
-    const totalBonus = baseBonus + starBonus
-    const phase = Math.floor((pet.star || 0) / 5)
-    const phaseBonus = phase * (baseBonus * 0.5)
-    const finalBonus = totalBonus + phaseBonus
-    return {
-      attack: finalBonus,
-      defense: finalBonus,
-      health: finalBonus
-    }
-  }
-
-  // 获取升级所需精华数量
-  const getUpgradeCost = pet => {
-    return (pet.level || 1) * 10
-  }
-
-  // 检查是否可以升级
-  const canUpgrade = pet => {
-    const cost = getUpgradeCost(pet)
-    return playerStore.petEssence >= cost
-  }
-
-  // 获取可用作升星材料的灵宠列表
-  const getAvailableFoodPets = pet => {
-    if (!pet) return []
-    return playerStore.items
-      .filter(
-        item =>
-          item.type === 'pet' &&
-          item.id !== pet.id &&
-          item.star === pet.star &&
-          item.rarity === pet.rarity &&
-          item.name === pet.name
-      )
-      .map(item => ({
-        label: `${item.name} (${item.level || 1}级 ${item.star || 0}星)`,
-        value: item.id
-      }))
-  }
-
-  // 升级灵宠
-  const upgradePet = async pet => {
-    try {
-      const result = await inventoryUpgradePet(String(pet.id))
-      applyServerInventoryResult(result)
-      message.success(result?.message || '升级成功')
-    } catch (error) {
-      const code = error?.payload?.error
-      if (code === 'insufficient pet essence') {
-        message.error('灵宠精华不足')
-      } else if (code === 'inventory item not found') {
-        message.error('灵宠不存在，可能已被处理')
-      } else if (code === 'invalid inventory item type') {
-        message.error('目标不是灵宠，无法升级')
-      } else {
-        message.error(error?.message || '升级失败')
-      }
-    }
-  }
-
-  // 升星灵宠
-  const evolvePet = async pet => {
-    if (!selectedFoodPet.value) {
-      message.error('请选择用于升星的灵宠')
-      return
-    }
-
-    try {
-      const result = await inventoryEvolvePet(String(pet.id), String(selectedFoodPet.value))
-      applyServerInventoryResult(result)
-      message.success(result?.message || '升星成功')
-      selectedFoodPet.value = null
-      showPetModal.value = false
-    } catch (error) {
-      const code = error?.payload?.error
-      if (code === 'invalid evolve food pet') {
-        message.error(error?.payload?.message || '升星材料不符合要求')
-      } else if (code === 'inventory item not found') {
-        message.error('灵宠不存在，可能已被处理')
-      } else if (code === 'invalid inventory item type') {
-        message.error('升星目标或材料不是灵宠')
-      } else {
-        message.error(error?.message || '升星失败')
-      }
-    }
-  }
-
-  // 装备类型配置
   const equipmentTypes = {
-    weapon: '武器',
-    head: '头部',
-    body: '衣服',
-    legs: '裤子',
-    feet: '鞋子',
-    shoulder: '肩甲',
-    hands: '手套',
-    wrist: '护腕',
-    necklace: '项链',
-    ring1: '戒指1',
-    ring2: '戒指2',
-    belt: '腰带',
-    artifact: '法宝'
+    weapon: '武器', head: '头部', body: '衣服', legs: '裤子', feet: '鞋子',
+    shoulder: '肩甲', hands: '手套', wrist: '护腕', necklace: '项链',
+    ring1: '戒指1', ring2: '戒指2', belt: '腰带', artifact: '法宝'
   }
 
-  // 当前选中的装备类型
-  const selectedType = ref('')
+  const leftSlots = ['weapon', 'head', 'body', 'legs', 'feet', 'shoulder']
+  const rightSlots = ['hands', 'wrist', 'necklace', 'ring1', 'ring2', 'belt']
 
-  // 显示装备类型弹窗
-  const showEquipmentList = type => {
-    selectedType.value = type
-    selectedEquipmentType.value = type
-    currentEquipmentPage.value = 1
-  }
-
-  // 卸下装备
-  const unequipItem = async slot => {
-    try {
-      const result = await inventoryUnequipEquipment(slot)
-      applyServerInventoryResult(result)
-      showEquipmentDetailModal.value = false
-      message.success(result?.message || '当前装备已卸下')
-    } catch (error) {
-      const code = error?.payload?.error
-      if (code === 'equipment slot empty') {
-        message.error('该槽位当前没有装备')
-      } else if (code === 'invalid equipment slot') {
-        message.error('装备槽位参数无效')
+  // ---------------- 计算属性 ----------------
+  const filteredBagList = computed(() => {
+    return playerStore.items.filter(item => {
+      // 分类过滤
+      if (activeCategory.value === 'equipment') {
+        if (item.type === 'pet' || item.type === 'pill' || item.type === 'material') return false
+        if (selectedQuality.value !== 'all' && item.quality !== selectedQuality.value) return false
       } else {
-        message.error(error?.message || '卸下装备失败')
+        if (item.type !== activeCategory.value) return false
       }
-    }
-  }
-
-  // 装备列表相关
-  const selectedEquipmentType = ref('')
-  const selectedQuality = ref('all')
-  const currentEquipmentPage = ref(1)
-  const equipmentPageSize = ref(8)
-  const showSingleSellConfirm = ref(false)
-  const equipmentToSell = ref(null)
-  const showBatchSellConfirm = ref(false)
-
-  const equipmentTypeOptions = computed(() => {
-    return Object.entries(equipmentTypes).map(([value, label]) => ({ label, value }))
-  })
-
-  const currentQualityLabel = computed(() => qualityOptions.value.find(option => option.value === selectedQuality.value)?.label || '全部品质')
-
-  // 装备品质选项
-  const qualityOptions = computed(() => {
-    const equipmentsByQuality = {}
-    playerStore.items
-      .filter(item => !selectedEquipmentType.value || item.type === selectedEquipmentType.value)
-      .forEach(item => {
-        equipmentsByQuality[item.quality] = (equipmentsByQuality[item.quality] || 0) + 1
-      })
-    return [
-      { label: '全部品质', value: 'all' },
-      { label: '仙品', value: 'mythic', disabled: !equipmentsByQuality['mythic'] },
-      { label: '极品', value: 'legendary', disabled: !equipmentsByQuality['legendary'] },
-      { label: '上品', value: 'epic', disabled: !equipmentsByQuality['epic'] },
-      { label: '中品', value: 'rare', disabled: !equipmentsByQuality['rare'] },
-      { label: '下品', value: 'uncommon', disabled: !equipmentsByQuality['uncommon'] },
-      { label: '凡品', value: 'common', disabled: !equipmentsByQuality['common'] }
-    ]
-  })
-
-  // 过滤后的装备列表
-  const filteredEquipmentList = computed(() => {
-    let list = playerStore.items.filter(item => {
-      if (!selectedEquipmentType.value) return false
-      if (item.type !== selectedEquipmentType.value) return false
-      if (selectedQuality.value !== 'all' && item.quality !== selectedQuality.value) return false
       return true
     })
-    return list
   })
 
-  // 当前页显示的装备
-  const equipmentList = computed(() => {
-    const start = (currentEquipmentPage.value - 1) * equipmentPageSize.value
-    const end = start + equipmentPageSize.value
-    return filteredEquipmentList.value.slice(start, end)
+  const emptyGridFill = computed(() => {
+    const count = filteredBagList.value.length
+    return count < 30 ? 30 - count : 0
   })
 
-  // 装备页大小改变处理
-  const onEquipmentPageSizeChange = size => {
-    equipmentPageSize.value = size
-    currentEquipmentPage.value = 1
-  }
+  const qualityOptions = [
+    { label: '全部品质', value: 'all' },
+    { label: '凡品', value: 'common' },
+    { label: '下品', value: 'uncommon' },
+    { label: '中品', value: 'rare' },
+    { label: '上品', value: 'epic' },
+    { label: '极品', value: 'legendary' },
+    { label: '仙品', value: 'mythic' }
+  ]
 
-  // 批量卖出装备
-  const batchSellEquipments = async () => {
-    try {
-      const result = await inventoryBatchSellEquipment({
-        quality: selectedQuality.value === 'all' ? '' : selectedQuality.value,
-        equipmentType: selectedEquipmentType.value || ''
-      })
-      applyServerInventoryResult(result)
-      message.success(result?.message || '批量卖出成功')
-    } catch (error) {
-      message.error(error?.message || '批量卖出失败')
-    }
-    showBatchSellConfirm.value = false
-  }
-
-  const openBatchSellConfirm = () => {
-    if (filteredEquipmentList.value.length === 0) {
-      message.warning('当前筛选条件下没有可出售的装备')
-      return
-    }
-    showBatchSellConfirm.value = true
-  }
-
-  const defaultAuctionPrice = item => {
-    if (!item) return 100
-    if (item.type === 'pet') {
-      const petBase = {
-        mortal: 200,
-        spiritual: 450,
-        mystic: 1000,
-        celestial: 2200,
-        divine: 5000
-      }
-      return petBase[item.rarity] || 300
-    }
-    const equipmentBase = {
-      common: 80,
-      uncommon: 150,
-      rare: 300,
-      epic: 700,
-      legendary: 1500,
-      mythic: 3200
-    }
-    return equipmentBase[item.quality] || 120
-  }
-
-  const getAuctionListingTypeName = item => {
-    if (!item?.type) return '未知'
-    if (item.type === 'pet') {
-      return `灵宠/${petRarities[item.rarity]?.name || item.rarity || '未知品阶'}`
-    }
-    if (item.type === 'pill') {
-      return '丹药'
-    }
-    return `装备/${equipmentTypes[item.type] || item.type}`
-  }
-
-  const quickListAuction = item => {
-    if (!item?.id) {
-      message.error('物品数据异常，无法上架')
-      return
-    }
-
-    if (item.type === 'pet' && playerStore.activePet?.id && String(playerStore.activePet.id) === String(item.id)) {
-      message.error('出战中的灵宠无法上架，请先召回')
-      return
-    }
-
-    auctionListingItem.value = item
-    auctionListingPrice.value = defaultAuctionPrice(item)
-    showAuctionListConfirm.value = true
-  }
-
-  const cancelAuctionListing = () => {
-    showAuctionListConfirm.value = false
-    auctionListingItem.value = null
-    auctionListingPrice.value = 100
-    auctionListingSubmitting.value = false
-  }
-
-  const confirmAuctionListing = async () => {
-    if (!auctionListingItem.value?.id) {
-      message.error('物品数据异常，无法上架')
-      return
-    }
-    const parsed = Math.floor(Number(auctionListingPrice.value))
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      message.warning('请输入有效价格')
-      return
-    }
-
-    try {
-      auctionListingSubmitting.value = true
-      const result = await createAuctionOrder({
-        itemId: String(auctionListingItem.value.id),
-        price: parsed,
-        durationHours: 24
-      })
-      applyServerInventoryResult(result)
-      message.success(result?.message || '上架成功')
-      cancelAuctionListing()
-      showEquipmentDetailModal.value = false
-      showPetModal.value = false
-    } catch (error) {
-      message.error(error?.message || '上架失败')
-    } finally {
-      auctionListingSubmitting.value = false
-    }
-  }
-
-  // 卖出单件装备
-  const confirmSellEquipment = equipment => {
-    equipmentToSell.value = equipment
-    showSingleSellConfirm.value = true
-  }
-
-  const cancelSellEquipment = () => {
-    equipmentToSell.value = null
-    showSingleSellConfirm.value = false
-  }
-
-  const sellEquipmentConfirmed = async () => {
-    if (!equipmentToSell.value) return
-    try {
-      const result = await inventorySellEquipment(String(equipmentToSell.value.id))
-      applyServerInventoryResult(result)
-      message.success(result?.message || '卖出成功')
-      showEquipmentDetailModal.value = false
-    } catch (error) {
-      const code = error?.payload?.error
-      if (code === 'inventory item not found') {
-        message.error('装备不存在，可能已被处理')
-      } else if (code === 'invalid inventory item type') {
-        message.error('目标不是装备，无法卖出')
-      } else {
-        message.error(error?.message || '卖出失败')
-      }
-    } finally {
-      cancelSellEquipment()
-    }
-  }
-
-  const getSellPrice = equipment => {
-    const quality = equipment?.quality
-    const priceMap = {
-      common: 10,
-      uncommon: 25,
-      rare: 60,
-      epic: 150,
-      legendary: 320,
-      mythic: 600
-    }
-    const basePrice = priceMap[quality] || 10
-    return basePrice + Math.floor(Number(equipment?.enhanceLevel || 0) * 5)
-  }
-
-  const summarizeEquipmentStats = equipment => {
-    if (!equipment?.stats || typeof equipment.stats !== 'object') {
-      return '暂无属性信息'
-    }
-    return Object.entries(equipment.stats)
-      .slice(0, 3)
-      .map(([stat, value]) => `${getStatName(stat)} ${formatStatValue(stat, value)}`)
-      .join(' · ')
-  }
-
-  // 显示装备详情
-  const showEquipmentDetails = equipment => {
-    selectedEquipment.value = equipment
-    showEquipmentDetailModal.value = true
-  }
-
-  // 装备详情相关
-  const showEquipmentDetailModal = ref(false)
-  const selectedEquipment = ref(null)
-
-  // 强化确认弹窗
-  const showEnhanceConfirm = ref(false)
-
-  // 强化装备
-  const handleEnhanceEquipment = () => {
-    if (!selectedEquipment.value) return
-
-    inventoryEnhanceEquipment(String(selectedEquipment.value.id))
-      .then(result => {
-        applyServerInventoryResult(result)
-        showEnhanceConfirm.value = false
-        if (result?.success) {
-          message.success(result.message || '强化成功')
-        } else {
-          message.error(result?.message || '强化失败')
-        }
-      })
-      .catch(error => {
-        const code = error?.payload?.error
-        if (code === 'insufficient reinforce stones') {
-          message.error('强化石不足')
-        } else if (code === 'equipment max level reached') {
-          message.error('装备已达到最大强化等级')
-        } else if (code === 'equipment item not found') {
-          message.error('装备不存在，可能已被处理')
-        } else {
-          message.error(error?.message || '强化失败')
-        }
-      })
-  }
-
-  // 洗练确认弹窗
-  const showReforgeConfirm = ref(false)
-  const reforgeResult = ref(null)
-
-  // 洗练装备
-  const handleReforgeEquipment = () => {
-    if (!selectedEquipment.value) return
-    inventoryReforgeEquipment(String(selectedEquipment.value.id))
-      .then(result => {
-        applyServerInventoryResult(result)
-        if (result?.success) {
-          message.success(result.message || '洗练成功')
-        } else {
-          message.error(result?.message || '洗练失败')
-        }
-      })
-      .catch(error => {
-        const code = error?.payload?.error
-        if (code === 'insufficient refinement stones') {
-          message.error('洗练石不足')
-        } else if (code === 'equipment item not found') {
-          message.error('装备不存在，可能已被处理')
-        } else if (code === 'invalid equipment type') {
-          message.error('该装备类型不支持洗练')
-        } else {
-          message.error(error?.message || '洗练失败')
-        }
-      })
-  }
-
-  // 确认洗练结果
-  const confirmReforgeResult = confirm => {
-    if (!reforgeResult.value) return
-    if (confirm) {
-      // 用户确认后，应用新属性
-      selectedEquipment.value.stats = reforgeResult.value.newStats
-      message.success('已确认新属性')
-    } else {
-      // 用户取消，保留原属性
-      message.info('已保留原有属性')
-    }
-    showReforgeConfirm.value = false
-    reforgeResult.value = null
-  }
-
-  // 使用装备
-  const equipItem = async equipment => {
-    try {
-      const result = await inventoryEquipEquipment(String(equipment.id))
-      applyServerInventoryResult(result)
-      showEquipmentDetailModal.value = false
-      message.success(result?.message || '装备成功')
-    } catch (error) {
-      const code = error?.payload?.error
-      if (code === 'equipment requirement not met') {
-        message.error('境界不足，无法装备此装备')
-      } else if (code === 'equipment item not found') {
-        message.error('装备不存在，可能已被处理')
-      } else if (code === 'invalid equipment slot' || code === 'invalid equipment type') {
-        message.error('装备数据异常，无法装备')
-      } else {
-        message.error(error?.message || '装备失败')
-      }
-    }
-  }
-
-  // 计算灵草分组
-  const groupedHerbs = computed(() => {
-    const groups = {}
-    playerStore.herbs.forEach(herb => {
-      if (!groups[herb.name]) {
-        groups[herb.name] = {
-          ...herb,
-          count: 1
-        }
-      } else {
-        groups[herb.name].count++
-      }
-    })
-    return Object.values(groups)
-  })
-
-  // 计算丹方分组
-  const groupedFormulas = computed(() => {
-    // 从pillRecipes中获取完整丹方
-    const complete = playerStore.pillRecipes
-      .map(recipeId => {
-        const recipe = pillRecipes.find(r => r.id === recipeId)
-        return recipe
-          ? {
-              id: recipe.id,
-              name: recipe.name,
-              description: recipe.description,
-              grade: recipe.grade,
-              type: recipe.type,
-              isComplete: true
-            }
-          : null
-      })
-      .filter(Boolean)
-
-    // 从pillFragments中获取残缺丹方
-    const incomplete = Object.entries(playerStore.pillFragments)
-      .map(([recipeId, fragments]) => {
-        const recipe = pillRecipes.find(r => r.id === recipeId)
-        return recipe
-          ? {
-              id: recipe.id,
-              name: recipe.name,
-              description: recipe.description,
-              grade: recipe.grade,
-              type: recipe.type,
-              isComplete: false,
-              fragments,
-              fragmentsNeeded: recipe.fragmentsNeeded
-            }
-          : null
-      })
-      .filter(Boolean)
-
-    return { complete, incomplete }
-  })
-
-  // 计算丹药分组
-  const groupedPills = computed(() => {
-    const groups = {}
-    playerStore.items
-      .filter(item => item.type === 'pill')
-      .forEach(pill => {
-        if (!groups[pill.name]) {
-          groups[pill.name] = {
-            ...pill,
-            count: 1
-          }
-        } else {
-          groups[pill.name].count++
-        }
-      })
-    return Object.values(groups)
-  })
-  // 使用物品
-  const useItem = async item => {
-    if (item.type === 'pet') {
-      try {
-        const result = await gameUseItem(String(item.id))
-        applyServerInventoryResult(result)
-        message.success(result?.message || '操作成功')
-      } catch (error) {
-        const code = error?.payload?.error
-        if (code === 'inventory item not found') {
-          message.error('灵宠不存在，可能已被处理')
-        } else if (code === 'invalid inventory item type') {
-          message.error('目标不是灵宠，无法出战/召回')
-        } else {
-          message.error(error?.message || '操作失败')
-        }
-      }
-    }
-  }
-
-  // 装备属性对比计算
-  const equipmentComparison = computed(() => {
-    if (!selectedEquipment.value || !selectedEquipmentType.value) return null
-    const currentEquipment = playerStore.equippedArtifacts[selectedEquipmentType.value]
-    if (!currentEquipment) return null
+  const itemComparison = computed(() => {
+    if (!selectedItem.value || !isEquipment(selectedItem.value)) return null
+    const current = playerStore.equippedArtifacts[selectedItem.value.type]
+    if (!current || current.id === selectedItem.value.id) return null
+    
     const comparison = {}
-    const allStats = new Set([...Object.keys(selectedEquipment.value.stats), ...Object.keys(currentEquipment.stats)])
-    allStats.forEach(stat => {
-      const selectedValue = selectedEquipment.value.stats[stat] || 0
-      const currentValue = currentEquipment.stats[stat] || 0
-      const diff = selectedValue - currentValue
-      comparison[stat] = {
-        current: currentValue,
-        selected: selectedValue,
-        diff: diff,
-        isPositive: diff > 0
-      }
+    const stats = new Set([...Object.keys(selectedItem.value.stats || {}), ...Object.keys(current.stats || {})])
+    stats.forEach(s => {
+      const sVal = selectedItem.value.stats[s] || 0
+      const cVal = current.stats[s] || 0
+      comparison[s] = { current: cVal, selected: sVal, isPositive: sVal > cVal }
     })
     return comparison
   })
 
-  const options = [
-    { label: '全部品阶', value: 'all' },
-    { label: '神品', value: 'divine' },
-    { label: '仙品', value: 'celestial' },
-    { label: '玄品', value: 'mystic' },
-    { label: '灵品', value: 'spiritual' },
-    { label: '凡品', value: 'mortal' }
-  ]
+  // ---------------- 方法 ----------------
+  const formatNumber = val => Number(val || 0).toLocaleString()
+  const isEquipment = item => !['pet', 'pill', 'material'].includes(item.type)
+  const isItemEquipped = item => {
+    const equipped = playerStore.equippedArtifacts[item.type]
+    return equipped && String(equipped.id) === String(item.id)
+  }
+
+  const getItemQualityClass = item => `q-${item.quality || item.rarity || 'common'}`
+  const getSlotQualityClass = slot => {
+    const item = playerStore.equippedArtifacts[slot]
+    return item ? `q-${item.quality || 'common'}` : ''
+  }
+
+  const getItemQualityColor = item => {
+    const q = item.quality || item.rarity
+    const colors = { 
+      common: '#9ab0c6', mortal: '#9ab0c6', 
+      uncommon: '#18a058', spiritual: '#18a058',
+      rare: '#2080f0', mystic: '#2080f0',
+      epic: '#a042ff', celestial: '#a042ff',
+      legendary: '#f0a020', divine: '#d03050',
+      mythic: '#ff4d4f'
+    }
+    return colors[q] || colors.common
+  }
+
+  const getItemQualityName = item => {
+    const q = item.quality || item.rarity
+    const names = { 
+      common: '凡品', uncommon: '下品', rare: '中品', epic: '上品', legendary: '极品', mythic: '仙品',
+      mortal: '凡阶', spiritual: '灵阶', mystic: '玄阶', celestial: '仙阶', divine: '神阶'
+    }
+    return names[q] || '未知'
+  }
+
+  const showItemDetails = item => {
+    selectedItem.value = item
+    showDetailDrawer.value = true
+  }
+
+  const handleSlotClick = slot => {
+    const equipped = playerStore.equippedArtifacts[slot]
+    if (equipped) {
+      showItemDetails(equipped)
+    } else {
+      activeCategory.value = 'equipment'
+      // 可以在这里加个自动筛选部位的逻辑
+    }
+  }
+
+  // ---------------- 核心逻辑 API 调用 (对接原 logic) ----------------
+  const applyResult = res => {
+    if (result?.snapshot) playerStore.applyServerSnapshot(result.snapshot)
+  }
+
+  const handleEquip = async item => {
+    try {
+      const res = await inventoryEquipEquipment(String(item.id))
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('穿戴成功')
+      showDetailDrawer.value = false
+    } catch (e) { message.error(e.message || '装备失败') }
+  }
+
+  const handleUnequip = async slot => {
+    try {
+      const res = await inventoryUnequipEquipment(slot)
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('已卸下')
+      showDetailDrawer.value = false
+    } catch (e) { message.error(e.message || '卸下失败') }
+  }
+
+  const openEnhanceModal = () => { showEnhanceModal.value = true }
+  const doEnhance = async () => {
+    try {
+      const res = await inventoryEnhanceEquipment(String(selectedItem.value.id))
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('强化成功')
+      showEnhanceModal.value = false
+      selectedItem.value = playerStore.items.find(i => i.id === selectedItem.value.id)
+    } catch (e) { message.error(e.message || '强化失败') }
+  }
+
+  const handleReforge = async () => {
+    try {
+      const res = await inventoryReforgeEquipment(String(selectedItem.value.id))
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('洗练完成')
+      selectedItem.value = playerStore.items.find(i => i.id === selectedItem.value.id)
+    } catch (e) { message.error(e.message || '洗练失败') }
+  }
+
+  const usePill = async pill => {
+    try {
+      const res = await gameUseItem(String(pill.id))
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('服用成功')
+      showDetailDrawer.value = false
+    } catch (e) { message.error(e.message || '服用失败') }
+  }
+
+  const useItem = async item => {
+    try {
+      const res = await gameUseItem(String(item.id))
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('操作成功')
+    } catch (e) { message.error(e.message || '操作失败') }
+  }
+
+  const batchSellEquipments = async () => {
+    try {
+      const res = await inventoryBatchSellEquipment({
+        quality: selectedQuality.value === 'all' ? '' : selectedQuality.value,
+        equipmentType: ''
+      })
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('批量分解成功')
+      showBatchSellConfirm.value = false
+    } catch (e) { message.error('操作失败') }
+  }
+
+  const handleQuickAuction = () => {
+    auctionListingPrice.value = defaultAuctionPrice(selectedItem.value)
+    showAuctionListConfirm.value = true
+  }
+
+  const confirmAuctionListing = async () => {
+    try {
+      const res = await createAuctionOrder({
+        itemId: String(selectedItem.value.id),
+        price: Math.floor(auctionListingPrice.value),
+        durationHours: 24
+      })
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('上架成功')
+      showAuctionListConfirm.value = false
+      showDetailDrawer.value = false
+    } catch (e) { message.error('上架失败') }
+  }
+
+  // ---------------- 灵宠逻辑 ----------------
+  const getPetBonus = pet => {
+    if (!pet) return { attack: 0, defense: 0, health: 0 }
+    const qualityBonusMap = { divine: 0.5, celestial: 0.3, mystic: 0.2, spiritual: 0.1, mortal: 0.05 }
+    const baseBonus = qualityBonusMap[pet.rarity] || 0.05
+    const starBonus = (pet.star || 0) * 0.05
+    const final = baseBonus + starBonus
+    return { attack: final, defense: final, health: final }
+  }
+  const getUpgradeCost = pet => (pet.level || 1) * 10
+  const canUpgrade = pet => playerStore.petEssence >= getUpgradeCost(pet)
+  const upgradePet = async pet => {
+    try {
+      const res = await inventoryUpgradePet(String(pet.id))
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('升级成功')
+      selectedItem.value = playerStore.items.find(i => i.id === pet.id)
+    } catch (e) { message.error('升级失败') }
+  }
+  const getAvailableFoodPets = pet => playerStore.items
+    .filter(i => i.type === 'pet' && i.id !== pet.id && i.rarity === pet.rarity && i.name === pet.name)
+    .map(i => ({ label: `${i.name} (${i.level}级)`, value: i.id }))
+  
+  const evolvePet = async pet => {
+    try {
+      const res = await inventoryEvolvePet(String(pet.id), String(selectedFoodPet.value))
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('升星成功')
+      selectedFoodPet.value = null
+      selectedItem.value = playerStore.items.find(i => i.id === pet.id)
+    } catch (e) { message.error('升星失败') }
+  }
+
+  const defaultAuctionPrice = item => {
+    const base = { common: 100, uncommon: 200, rare: 500, epic: 1200, legendary: 3000, mythic: 8000 }
+    return base[item.quality] || 100
+  }
+
+  const confirmSellEquipment = item => {
+    // 简化直接卖
+    inventorySellEquipment(String(item.id)).then(res => {
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('出售成功')
+      showDetailDrawer.value = false
+    })
+  }
+
+  const confirmReleasePet = item => {
+    inventoryReleasePet(String(item.id)).then(res => {
+      playerStore.applyServerSnapshot(res.snapshot)
+      message.success('已放生')
+      showDetailDrawer.value = false
+    })
+  }
+
+  const min = (a, b) => (a < b ? a : b)
 </script>
 
 <style scoped>
-  .equipment-layout {
-    display: grid;
-    grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
-    gap: 16px;
-    align-items: start;
-  }
+.inventory-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
 
-  .equipment-slot-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
+.inventory-layout {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 20px;
+  margin-top: 20px;
+  flex: 1;
+}
 
-  .equipment-slot-card,
-  .equipment-row-card {
-    border: 1px solid rgba(127, 127, 127, 0.16);
-    border-radius: 12px;
-    padding: 12px;
-    background: rgba(255, 255, 255, 0.02);
-  }
+/* 角色部分 */
+.character-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
 
-  .equipment-slot-head,
-  .equipment-list-toolbar,
-  .equipment-row-main,
-  .equipment-row-actions,
-  .equipment-slot-actions {
-    display: flex;
-    gap: 8px;
-  }
+.character-doll {
+  position: relative;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 24px;
+  padding: 24px;
+  height: 520px;
+  display: flex;
+  flex-direction: column;
+}
 
-  .equipment-slot-head,
-  .equipment-list-toolbar,
-  .equipment-row-main {
-    justify-content: space-between;
-    align-items: flex-start;
-  }
+.doll-overlay {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
 
-  .equipment-slot-actions,
-  .equipment-row-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
+.doll-title { font-family: var(--font-display); font-size: 20px; }
+.spirit-stones-tag { font-size: 13px; color: var(--accent-primary); display: flex; align-items: center; gap: 4px; }
 
-  .equipment-slot-name,
-  .equipment-row-title {
-    font-weight: 700;
-    color: var(--ink-main);
-  }
+.equipment-slots {
+  display: flex;
+  justify-content: space-between;
+  flex: 1;
+}
 
-  .equipment-slot-name {
-    margin: 6px 0;
-  }
+.slot-column {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
 
-  .equipment-slot-empty,
-  .equipment-row-stats {
-    color: var(--ink-sub);
-    font-size: 13px;
-  }
+.slot-column.center {
+  justify-content: center;
+  align-items: center;
+}
 
-  .equipment-row-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-    margin: 6px 0;
-  }
+.character-silhouette {
+  width: 140px;
+  height: 300px;
+  display: grid;
+  place-items: center;
+}
 
-  .equipment-item-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
+.item-slot {
+  width: 52px;
+  height: 52px;
+  background: rgba(0,0,0,0.05);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: grid;
+  place-items: center;
+}
 
-  .n-card {
-    cursor: pointer;
-  }
+.item-slot:hover { border-color: var(--accent-primary); transform: scale(1.05); }
+.item-slot.is-empty { border-style: dashed; }
 
-  .reforge-compare {
-    display: flex;
-    justify-content: space-between;
-    gap: 20px;
-    margin: 16px 0;
-  }
+.slot-placeholder { font-size: 18px; color: var(--ink-sub); opacity: 0.3; font-family: var(--font-display); }
+.slot-label { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--ink-sub); }
+.slot-mark { font-family: var(--font-display); font-size: 20px; opacity: 0.8; }
 
-  .old-stats,
-  .new-stats {
-    flex: 1;
-    padding: 16px;
-    border-radius: 8px;
-    background-color: rgba(0, 0, 0, 0.05);
-  }
+/* 物品网格 */
+.bag-section {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
-  .old-stats h3,
-  .new-stats h3 {
-    margin-top: 0;
-    margin-bottom: 12px;
-    font-size: 16px;
-    color: #666;
-  }
+.bag-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
 
-  @media (max-width: 768px) {
-    .equipment-layout {
-      grid-template-columns: 1fr;
-    }
+.grid-scrollbar { flex: 1; }
 
-    .equipment-slot-grid {
-      grid-template-columns: 1fr;
-    }
+.item-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 12px;
+  padding: 20px;
+}
 
-    .equipment-list-toolbar,
-    .equipment-row-main {
-      flex-direction: column;
-    }
+.grid-item {
+  aspect-ratio: 1;
+  background: rgba(0,0,0,0.03);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
 
-    .equipment-row-actions,
-    .equipment-slot-actions {
-      justify-content: flex-start;
-    }
+.grid-item:hover { border-color: var(--accent-primary); background: var(--accent-muted); }
+.grid-item.is-empty { cursor: default; opacity: 0.3; }
+.grid-item.is-equipped::after {
+  content: 'E';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--accent-primary);
+  color: white;
+  font-size: 8px;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-weight: bold;
+}
 
-    :deep(.n-grid) {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
+.item-icon-wrap { width: 100%; height: 100%; display: grid; place-items: center; position: relative; }
+.item-mark { font-family: var(--font-display); font-size: 24px; opacity: 0.6; }
+.item-count { position: absolute; bottom: 2px; right: 4px; font-size: 10px; font-weight: bold; }
+.item-enhance { position: absolute; top: 2px; left: 4px; font-size: 10px; color: var(--accent-primary); }
+.item-name { font-size: 10px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-top: 2px; }
 
-    :deep(.n-tabs-nav-scroll-content) {
-      width: 100%;
-    }
+/* 品质颜色 */
+.q-common { border-color: #9ab0c6; }
+.q-uncommon { border-color: #18a058; }
+.q-rare { border-color: #2080f0; }
+.q-epic { border-color: #a042ff; }
+.q-legendary { border-color: #f0a020; }
+.q-mythic { border-color: #ff4d4f; }
+.q-divine { border-color: #d03050; box-shadow: 0 0 10px rgba(208, 48, 80, 0.2); }
 
-    :deep(.n-tabs-tab) {
-      flex: 1;
-      justify-content: center;
-    }
+/* 材料统计 */
+.material-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.m-item {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.m-item .label { font-size: 11px; color: var(--ink-sub); }
+.m-item .value { font-size: 14px; font-weight: bold; color: var(--accent-primary); margin-top: 2px; }
 
-    .reforge-compare {
-      flex-direction: column;
-      gap: 12px;
-    }
-  }
+/* 详情侧边 */
+.detail-drawer {
+  --n-drawer-border-radius: 24px 0 0 24px;
+}
+
+.detail-title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.detail-title-row h3 { margin: 0; font-family: var(--font-display); font-size: 24px; }
+.detail-meta { font-size: 13px; color: var(--ink-sub); display: flex; gap: 16px; }
+.realm-req.is-met { color: var(--accent-primary); }
+
+.detail-content { display: flex; flex-direction: column; gap: 24px; padding: 10px 0; }
+.section-title { font-size: 14px; font-weight: bold; margin-bottom: 12px; color: var(--ink-main); border-left: 4px solid var(--accent-primary); padding-left: 10px; }
+
+.stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.stat-row { background: rgba(0,0,0,0.02); padding: 10px; border-radius: 10px; display: flex; justify-content: space-between; }
+.s-label { font-size: 12px; color: var(--ink-sub); }
+.s-value { font-size: 14px; font-weight: bold; }
+
+.comp-table { display: flex; flex-direction: column; gap: 8px; }
+.comp-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(0,0,0,0.02); border-radius: 10px; }
+.c-vals { display: flex; align-items: center; gap: 12px; }
+.c-current { font-size: 12px; opacity: 0.6; }
+.c-next { font-weight: bold; }
+
+@media (max-width: 1080px) {
+  .inventory-layout { grid-template-columns: 1fr; }
+  .character-section { order: 2; }
+  .bag-section { order: 1; height: 500px; }
+  .character-doll { height: auto; }
+}
+
+@media (max-width: 768px) {
+  .equipment-slots { flex-direction: column; align-items: center; gap: 40px; }
+  .slot-column { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+  .character-silhouette { display: none; }
+  .item-slot { width: 48px; height: 48px; }
+}
 </style>

@@ -10,7 +10,7 @@
                   <div class="brand-area">
                     <p class="brand-eyebrow">修真总览</p>
                     <h1 class="brand-title">修仙大世界</h1>
-                    <p class="brand-presence">当前活跃修士：{{ formatNumber(activePlayers) }} 人（近 {{ activeWindowHours }} 小时）</p>
+                    <p class="brand-presence">活跃修士：{{ formatNumber(activePlayers) }} 人</p>
                   </div>
 
                   <div class="header-right">
@@ -42,155 +42,41 @@
               </n-layout-header>
 
               <n-layout-content class="app-content">
-                <div class="workspace">
-                  <aside class="side-column panel-enter-left">
-                      <n-card :bordered="false" class="cultivator-card">
-                        <div class="cultivator-head">
+                <div class="workspace" :class="{ 'is-compact': isCompact }">
+                  <aside v-if="!isCompact" class="side-column panel-enter-left">
+                    <n-card :bordered="false" class="cultivator-card" @click="showProfileDrawer = true">
+                      <div class="cultivator-head">
                         <div class="name-avatar-wrap">
-                          <img v-if="linuxDoAvatar" :src="linuxDoAvatar" alt="LinuxDo Avatar" class="linuxdo-avatar" />
+                          <img v-if="linuxDoAvatar" :src="linuxDoAvatar" alt="Avatar" class="linuxdo-avatar" />
                           <div v-else class="name-seal">{{ playerInitial }}</div>
                         </div>
-                        <div>
+                        <div class="head-info">
                            <h2>{{ playerStore.name }}</h2>
                            <p>{{ currentRealmName }}</p>
-                           <p v-if="linuxDoUserId" class="linuxdo-id">LinuxDo ID: {{ linuxDoUserId }}</p>
                         </div>
                       </div>
 
                       <div class="progress-meta">
-                        <span>当前修为</span>
-                        <strong>{{ displayCultivation }} / {{ displayMaxCultivation }}</strong>
+                        <span>修为进度</span>
+                        <strong>{{ cultivationPercent }}%</strong>
                       </div>
                       <n-progress
                         type="line"
                         :percentage="cultivationPercent"
-                        indicator-placement="inside"
-                        :show-indicator="true"
+                        :show-indicator="false"
                         processing
                         color="var(--accent-primary)"
                         rail-color="var(--accent-muted)"
                       />
-
-                      <div class="quick-grid">
-                        <div class="quick-item">
-                          <span>强化石</span>
-                          <strong>{{ formatNumber(playerStore.reinforceStones) }}</strong>
-                        </div>
-                        <div class="quick-item">
-                          <span>洗练石</span>
-                          <strong>{{ formatNumber(playerStore.refinementStones) }}</strong>
-                        </div>
-                        <div class="quick-item">
-                          <span>攻击</span>
-                          <strong>{{ (playerStore.baseAttributes.attack || 0).toFixed(0) }}</strong>
-                        </div>
-                        <div class="quick-item">
-                          <span>生命</span>
-                          <strong>{{ (playerStore.baseAttributes.health || 0).toFixed(0) }}</strong>
-                        </div>
-                      </div>
-
-                      <n-collapse arrow-placement="right" class="detail-collapse">
-                        <n-collapse-item title="基础属性" name="base">
-                          <n-descriptions :column="2" bordered size="small">
-                            <n-descriptions-item label="攻击力">
-                              {{ formatInt(playerStore.baseAttributes.attack) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="生命值">
-                              {{ formatInt(playerStore.baseAttributes.health) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="防御力">
-                              {{ formatInt(playerStore.baseAttributes.defense) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="速度">
-                              {{ formatInt(playerStore.baseAttributes.speed) }}
-                            </n-descriptions-item>
-                          </n-descriptions>
-                        </n-collapse-item>
-
-                        <n-collapse-item title="战斗属性" name="combat">
-                          <n-descriptions :column="2" bordered size="small">
-                            <n-descriptions-item label="暴击率">
-                              {{ formatPercent(playerStore.combatAttributes.critRate) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="眩晕率">
-                              {{ formatPercent(playerStore.combatAttributes.stunRate) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="连击率">
-                              {{ formatPercent(playerStore.combatAttributes.comboRate) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="闪避率">
-                              {{ formatPercent(playerStore.combatAttributes.dodgeRate) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="反击率">
-                              {{ formatPercent(playerStore.combatAttributes.counterRate) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="吸血率">
-                              {{ formatPercent(playerStore.combatAttributes.vampireRate) }}
-                            </n-descriptions-item>
-                          </n-descriptions>
-                        </n-collapse-item>
-
-                        <n-collapse-item title="战斗抗性" name="resistance">
-                          <n-descriptions :column="2" bordered size="small">
-                            <n-descriptions-item label="暴击抗性">
-                              {{ formatPercent(playerStore.combatResistance.critResist) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="眩晕抗性">
-                              {{ formatPercent(playerStore.combatResistance.stunResist) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="连击抗性">
-                              {{ formatPercent(playerStore.combatResistance.comboResist) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="闪避抗性">
-                              {{ formatPercent(playerStore.combatResistance.dodgeResist) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="反击抗性">
-                              {{ formatPercent(playerStore.combatResistance.counterResist) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="吸血抗性">
-                              {{ formatPercent(playerStore.combatResistance.vampireResist) }}
-                            </n-descriptions-item>
-                          </n-descriptions>
-                        </n-collapse-item>
-
-                        <n-collapse-item title="特殊属性" name="special">
-                          <n-descriptions :column="2" bordered size="small">
-                            <n-descriptions-item label="治疗提升">
-                              {{ formatPercent(playerStore.specialAttributes.healBoost) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="战斗提升">
-                              {{ formatPercent(playerStore.specialAttributes.combatBoost) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="暴伤提升">
-                              {{ formatPercent(playerStore.specialAttributes.critDamageBoost) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="抗性提升">
-                              {{ formatPercent(playerStore.specialAttributes.resistanceBoost) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="暴伤减免">
-                              {{ formatPercent(playerStore.specialAttributes.critDamageReduce) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="最终增伤">
-                              {{ formatPercent(playerStore.specialAttributes.finalDamageBoost) }}
-                            </n-descriptions-item>
-                            <n-descriptions-item label="最终减伤">
-                              {{ formatPercent(playerStore.specialAttributes.finalDamageReduce) }}
-                            </n-descriptions-item>
-                          </n-descriptions>
-                        </n-collapse-item>
-                      </n-collapse>
                     </n-card>
 
-                    <n-card :bordered="false" class="nav-card" title="山门导航">
-                      <n-scrollbar :x-scrollable="isCompact" trigger="none" class="nav-scroll">
-                        <n-menu
-                          :mode="isCompact ? 'horizontal' : 'vertical'"
-                          :options="menuOptions"
-                          :value="getCurrentMenuKey()"
-                          @update:value="handleMenuClick"
-                        />
-                      </n-scrollbar>
+                    <n-card :bordered="false" class="nav-card">
+                      <n-menu
+                        mode="vertical"
+                        :options="menuOptions"
+                        :value="getCurrentMenuKey()"
+                        @update:value="handleMenuClick"
+                      />
                     </n-card>
                   </aside>
 
@@ -201,7 +87,31 @@
                   </main>
                 </div>
               </n-layout-content>
+
+              <!-- Mobile Navigation Bottom Tabbar -->
+              <div v-if="isCompact" class="mobile-tabbar">
+                <div 
+                  v-for="item in menuOptions.slice(0, 5)" 
+                  :key="item.key" 
+                  class="tab-item"
+                  :class="{ 'active': getCurrentMenuKey() === item.key }"
+                  @click="handleMenuClick(item.key)"
+                >
+                  <component :is="item.icon" />
+                  <span>{{ item.label }}</span>
+                </div>
+                <div class="tab-item" @click="showProfileDrawer = true">
+                  <div class="name-seal mini">{{ playerInitial }}</div>
+                  <span>我</span>
+                </div>
+              </div>
             </n-layout>
+
+            <player-profile-drawer 
+              v-model:show="showProfileDrawer" 
+              :placement="isCompact ? 'bottom' : 'right'" 
+            />
+            
             <transition name="world-banner">
               <div v-if="activeWorldAnnouncement" class="world-announcement-layer">
                 <div class="world-announcement-track" :class="worldAnnouncementCategoryClass">
@@ -241,6 +151,7 @@
   import { Moon, Sunny, Flash } from '@vicons/ionicons5'
 
   import GlobalChatDock from './components/GlobalChatDock.vue'
+  import PlayerProfileDrawer from './components/PlayerProfileDrawer.vue'
   import { getRealmName } from './plugins/realm'
   import { fetchActivePlayerCount } from './api/modules/player'
   import { usePlayerStore } from './stores/player'
@@ -258,6 +169,7 @@
   const isNewPlayer = ref(false)
   const isLoading = ref(true)
   const isCompact = ref(false)
+  const showProfileDrawer = ref(false)
 
   const activeUsersSyncIntervalMs = 300000
   const appTitle = '修仙大世界'
@@ -699,9 +611,14 @@
     max-width: 1440px;
     margin: 0 auto;
     display: grid;
-    grid-template-columns: 340px minmax(0, 1fr);
-    gap: 18px;
+    grid-template-columns: 280px minmax(0, 1fr);
+    gap: 20px;
     align-items: start;
+  }
+
+  .workspace.is-compact {
+    grid-template-columns: 1fr;
+    padding-bottom: 80px;
   }
 
   .side-column,
@@ -719,9 +636,20 @@
     box-shadow: 0 14px 40px rgba(40, 31, 22, 0.08);
   }
 
-  .cultivator-card,
-  .nav-card {
+  .cultivator-card {
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     margin-bottom: 14px;
+  }
+
+  .cultivator-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 48px rgba(47, 107, 109, 0.15);
+    border-color: var(--accent-primary);
+  }
+
+  .nav-card {
+    padding: 8px 0;
   }
 
   .cultivator-head {
@@ -743,7 +671,6 @@
     border-radius: 12px;
     object-fit: cover;
     border: 1px solid rgba(127, 127, 127, 0.2);
-    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
   }
 
   .name-seal {
@@ -756,7 +683,14 @@
     font-size: 24px;
     color: #fff;
     background: linear-gradient(145deg, #c6853e, #9b5d26);
-    box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.3);
+  }
+
+  .name-seal.mini {
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+    border-radius: 6px;
+    margin-bottom: 4px;
   }
 
   .cultivator-head h2 {
@@ -770,11 +704,6 @@
     margin-top: 4px;
     font-size: 13px;
     color: var(--ink-sub);
-  }
-
-  .linuxdo-id {
-    font-size: 12px;
-    letter-spacing: 0.02em;
   }
 
   .progress-meta {
@@ -792,45 +721,6 @@
     font-size: 14px;
   }
 
-  .quick-grid {
-    margin-top: 14px;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
-
-  .quick-item {
-    border-radius: 12px;
-    border: 1px dashed var(--panel-border);
-    padding: 8px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .quick-item span {
-    font-size: 12px;
-    color: var(--ink-sub);
-  }
-
-  .quick-item strong {
-    font-size: 14px;
-    color: var(--ink-main);
-  }
-
-  .detail-collapse {
-    margin-top: 14px;
-  }
-
-  .nav-card :deep(.n-card-header__main) {
-    font-family: var(--font-display);
-    letter-spacing: 0.08em;
-  }
-
-  .nav-scroll {
-    max-width: 100%;
-  }
-
   .stage-shell {
     padding: 2px;
     min-height: calc(100vh - 170px);
@@ -846,37 +736,69 @@
   }
 
   .page-view {
-    padding: 18px;
+    padding: 24px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-  }
-
-  .page-head {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    gap: 20px;
   }
 
   .page-head h2 {
-    font-size: 26px;
-    line-height: 1.1;
+    font-size: 32px;
     letter-spacing: 0.04em;
     font-family: var(--font-display);
   }
 
-  .page-eyebrow {
-    font-size: 12px;
-    letter-spacing: 0.28em;
-    color: var(--ink-sub);
-  }
-
   .page-desc {
     color: var(--ink-sub);
+    font-size: 14px;
   }
 
-  .page-card {
-    border-radius: 16px !important;
+  /* Mobile Bottom Tabbar */
+  .mobile-tabbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 72px;
+    background: color-mix(in srgb, var(--panel-bg) 95%, transparent);
+    backdrop-filter: blur(20px);
+    border-top: 1px solid var(--panel-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    padding: 0 10px;
+    z-index: 1000;
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.05);
+  }
+
+  .tab-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--ink-sub);
+    transition: all 0.3s ease;
+    padding: 8px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+
+  .tab-item :deep(.n-icon) {
+    font-size: 22px;
+  }
+
+  .tab-item span {
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .tab-item.active {
+    color: var(--accent-primary);
+    background: var(--accent-muted);
+  }
+
+  .tab-item.active :deep(.n-icon) {
+    transform: scale(1.1);
   }
 
   @keyframes rise-in {
@@ -890,29 +812,12 @@
     }
   }
 
-  ::-webkit-scrollbar {
-    width: 11px;
-    height: 11px;
-  }
-
-  ::-webkit-scrollbar-track {
-    background-color: rgba(0, 0, 0, 0.06);
-  }
-
-  ::-webkit-scrollbar-thumb {
-    background-color: rgba(0, 0, 0, 0.26);
-    border-radius: 8px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
-  }
-
-  html.dark ::-webkit-scrollbar-track {
-    background-color: rgba(255, 255, 255, 0.06);
-  }
-
-  html.dark ::-webkit-scrollbar-thumb {
-    background-color: rgba(255, 255, 255, 0.28);
-  }
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); }
+  ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.2); border-radius: 10px; }
+  html.dark ::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); }
+  html.dark ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); }
 
   .world-announcement-layer {
     position: fixed;
@@ -940,232 +845,38 @@
   .world-announcement-track.is-breakthrough {
     border-color: rgba(136, 207, 255, 0.58);
     background: linear-gradient(90deg, rgba(14, 38, 68, 0.96), rgba(24, 103, 162, 0.9));
-    box-shadow: 0 18px 36px rgba(30, 95, 168, 0.24);
   }
 
-  .world-announcement-track.is-loot {
-    border-color: rgba(255, 212, 92, 0.62);
-    background: linear-gradient(90deg, rgba(63, 28, 10, 0.97), rgba(140, 76, 19, 0.9));
-    box-shadow: 0 18px 36px rgba(180, 113, 23, 0.22);
-  }
-
-  .world-announcement-track.is-enhance {
-    border-color: rgba(255, 121, 121, 0.58);
-    background: linear-gradient(90deg, rgba(55, 10, 24, 0.97), rgba(138, 28, 56, 0.9));
-    box-shadow: 0 18px 36px rgba(176, 31, 68, 0.24);
-  }
-
-  .world-announcement-badge {
-    color: #ffe29a;
-    font-size: 12px;
-    letter-spacing: 0.24em;
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-
-  .world-announcement-track.is-breakthrough .world-announcement-badge {
-    color: #bde7ff;
-  }
-
-  .world-announcement-track.is-loot .world-announcement-badge {
-    color: #ffe4a3;
-  }
-
-  .world-announcement-track.is-enhance .world-announcement-badge {
-    color: #ffd1da;
-  }
-
-  .world-announcement-text {
-    color: #fff7e1;
-    font-size: 16px;
-    font-weight: 700;
-    white-space: nowrap;
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
-  }
-
-  .world-banner-enter-active,
-  .world-banner-leave-active {
-    transition: opacity 0.2s ease;
-  }
-
-  .world-banner-enter-from,
-  .world-banner-leave-to {
-    opacity: 0;
-  }
+  .world-announcement-badge { color: #ffe29a; font-size: 12px; letter-spacing: 0.2em; }
+  .world-announcement-text { color: #fff7e1; font-size: 16px; font-weight: 700; }
 
   @keyframes world-banner-scroll {
-    from {
-      transform: translateX(100vw);
-    }
-    to {
-      transform: translateX(calc(-100% - 32px));
-    }
-  }
-
-  @media (max-width: 1280px) {
-    .workspace {
-      grid-template-columns: 320px minmax(0, 1fr);
-    }
-
-    .brand-title {
-      font-size: 24px;
-    }
+    from { transform: translateX(100vw); }
+    to { transform: translateX(calc(-100% - 32px)); }
   }
 
   @media (max-width: 1080px) {
-    .app-content {
-      padding: 14px;
-    }
-
-    .workspace {
-      grid-template-columns: 1fr;
-      gap: 14px;
-    }
-
-    .header-wrap {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
-    }
-
-    .header-right {
-      width: 100%;
-      justify-content: space-between;
-    }
-
-    .resource-ribbon {
-      justify-content: flex-start;
-    }
-
-    .stage-shell {
-      min-height: 0;
-    }
-  }
-
-  @media (max-width: 720px) {
-    .app-header {
-      position: sticky;
-      top: 0;
-      z-index: 1100;
-    }
-
-    .app-content {
-      padding: 10px;
-    }
-
-    .header-wrap {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
-      padding: 10px 12px;
-    }
-
-    .header-right {
-      width: 100%;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 10px;
-    }
-
-    .resource-ribbon {
-      width: 100%;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-    }
-
-    .brand-title {
-      font-size: 22px;
-    }
-
-    .stat-chip {
-      min-width: 0;
-      padding: 10px 8px;
-    }
-
-    .theme-switch {
-      align-self: flex-end;
-    }
-
-    .workspace {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 12px;
-    }
-
-    .side-column {
-      order: 2;
-    }
-
-    .stage-column {
-      order: 1;
-    }
-
-    .cultivator-head {
-      align-items: flex-start;
-    }
-
-    .progress-meta {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .detail-collapse :deep(.n-descriptions) {
-      --n-td-padding: 8px;
-    }
-
-    .nav-scroll :deep(.n-menu.n-menu--horizontal .n-menu-item),
-    .nav-scroll :deep(.n-menu.n-menu--horizontal .n-submenu) {
-      min-width: 88px;
-      justify-content: center;
-    }
-
-    .quick-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .world-announcement-layer {
-      top: 72px;
-    }
-
-    .world-announcement-track {
-      padding: 10px 16px;
-    }
-
-    .world-announcement-text {
-      font-size: 14px;
-    }
+    .app-header { padding: 10px 0; }
+    .brand-title { font-size: 22px; }
+    .header-wrap { padding: 10px 16px; }
+    .workspace { gap: 14px; }
   }
 
   @media (max-width: 768px) {
-    .page-view {
-      padding: 12px;
-      gap: 12px;
-    }
-
-    .stage-shell {
-      min-height: auto;
-    }
-
-    .page-head h2 {
-      font-size: 22px;
-    }
+    .app-content { padding: 10px; }
+    .stage-shell { min-height: auto; border-radius: 12px !important; }
+    .page-view { padding: 16px; }
+    .page-head h2 { font-size: 24px; }
+    .resource-ribbon { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .stat-chip { min-width: 0; padding: 6px; }
+    .stat-chip strong { font-size: 12px; }
+    .world-announcement-layer { top: 72px; }
   }
 
   @media (max-width: 480px) {
-    .brand-presence {
-      font-size: 12px;
-    }
-
-    .resource-ribbon {
-      grid-template-columns: 1fr;
-    }
-
-    .cultivator-head h2 {
-      font-size: 20px;
-    }
-
-    .page-view {
-      padding: 10px;
-    }
+    .brand-presence { font-size: 12px; }
+    .resource-ribbon { grid-template-columns: 1fr; }
+    .cultivator-head h2 { font-size: 20px; }
+    .page-view { padding: 10px; }
   }
 </style>

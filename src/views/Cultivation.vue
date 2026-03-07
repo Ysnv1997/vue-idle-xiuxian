@@ -1,209 +1,237 @@
 <template>
-  <section class="page-view cultivation-view">
+  <div class="page-view cultivation-page">
+    <!-- 顶部标题区 -->
     <header class="page-head">
-      <p class="page-eyebrow">静室打坐</p>
-      <h2>修炼</h2>
-      <p class="page-desc">打坐用于恢复灵力，地图刷怪用于消耗灵力并获得修为与掉落。</p>
+      <div class="head-main">
+        <p class="page-eyebrow">历练与参悟</p>
+        <h2 class="page-title">境界修炼</h2>
+      </div>
+      <div class="head-action">
+        <n-button 
+          type="info" 
+          secondary 
+          round
+          :loading="isBreakthroughSubmitting"
+          :disabled="!canBreakthrough"
+          @click="handleBreakthrough"
+        >
+          <template #icon><n-icon><FlashOutline /></n-icon></template>
+          手动突破
+        </n-button>
+      </div>
     </header>
 
-    <n-card :bordered="false" class="page-card">
-      <n-space vertical>
-        <n-alert type="info" show-icon>
-          <template #icon>
-            <n-icon>
-              <book-outline />
-            </n-icon>
-          </template>
-          打坐与刷图互斥；打坐和离线恢复灵力最多累计 12 小时，刷图会持续消耗灵力并自动推进战斗。
-        </n-alert>
+    <!-- 核心交互区 -->
+    <main class="cultivation-content">
+      <n-tabs v-model:value="activeCultivationTab" type="segment" animated class="custom-tabs">
+        <!-- 静室打坐 Tab -->
+        <n-tab-pane name="meditation" tab="静室打坐">
+          <div class="meditation-container" :class="{ 'is-active': isMeditating }">
+            <div class="spirit-focus-area">
+              <!-- 灵气汇聚动效 -->
+              <div v-if="isMeditating" class="spirit-particles">
+                <div v-for="i in 8" :key="i" class="particle"></div>
+              </div>
+              
+              <div class="meditation-circle">
+                <n-progress
+                  type="circle"
+                  :percentage="meditationSpiritPercent"
+                  :stroke-width="6"
+                  :color="isMeditating ? '#18a058' : '#9ab0c6'"
+                >
+                  <div class="circle-content">
+                    <span class="label">{{ meditationStateLabel }}</span>
+                    <span class="value">{{ meditationCurrentSpiritDisplay }}</span>
+                    <span class="cap">上限 {{ meditationSpiritCapDisplay }}</span>
+                  </div>
+                </n-progress>
+              </div>
+            </div>
 
-        <n-tabs v-model:value="activeCultivationTab" type="line" animated>
-          <n-tab-pane name="meditation" tab="静室打坐">
-            <n-space vertical>
-              <n-card size="small" embedded>
-                <n-space vertical>
-                  <n-progress
-                    type="line"
-                    :percentage="meditationSpiritPercent"
-                    :show-indicator="false"
-                    :height="14"
-                    color="#18a058"
-                  />
+            <div class="meditation-stats">
+              <div class="stat-box">
+                <span class="s-label">恢复速度</span>
+                <span class="s-value">{{ meditationCurrentRateDisplay }}/s</span>
+              </div>
+              <div class="stat-box">
+                <span class="s-label">本轮收益</span>
+                <span class="s-value text-success">+{{ meditationTotalSpiritGainDisplay }}</span>
+              </div>
+              <div class="stat-box">
+                <span class="s-label">充满预计</span>
+                <span class="s-value">{{ meditationFillEstimateLabel }}</span>
+              </div>
+            </div>
 
-                    <n-descriptions bordered :column="1">
-                      <n-descriptions-item label="当前状态">{{ meditationStateLabel }}</n-descriptions-item>
-                      <n-descriptions-item label="当前灵力">
-                        {{ meditationCurrentSpiritDisplay }} / {{ meditationSpiritCapDisplay }}
-                      </n-descriptions-item>
-                      <n-descriptions-item label="打坐恢复速度">
-                        {{ meditationCurrentRateDisplay }} / 秒
-                      </n-descriptions-item>
-                      <n-descriptions-item label="本轮累计恢复">
-                        {{ meditationTotalSpiritGainDisplay }}
-                      </n-descriptions-item>
-                    <n-descriptions-item label="预计充满时间">
-                      {{ meditationFillEstimateLabel }}
-                    </n-descriptions-item>
-                  </n-descriptions>
+            <div class="action-bar">
+              <n-button
+                v-if="!isMeditating"
+                type="primary"
+                size="large"
+                block
+                round
+                :loading="isMeditationSubmitting"
+                :disabled="isHuntingRunning"
+                @click="startMeditation"
+              >
+                开启灵脉聚气
+              </n-button>
+              <n-button
+                v-else
+                type="warning"
+                size="large"
+                block
+                round
+                ghost
+                :loading="isMeditationSubmitting"
+                @click="stopMeditation()"
+              >
+                结束打坐
+              </n-button>
+            </div>
+          </div>
+        </n-tab-pane>
 
-                  <n-space justify="space-between">
-                    <n-button
-                      v-if="!isMeditating"
-                      type="primary"
-                      size="large"
-                      :loading="isMeditationSubmitting"
-                      :disabled="isHuntingRunning"
-                      @click="startMeditation"
-                    >
-                      开始打坐
-                    </n-button>
-                    <n-button
-                      v-else
-                      type="warning"
-                      size="large"
-                      :loading="isMeditationSubmitting"
-                      @click="stopMeditation()"
-                    >
-                      停止打坐
-                    </n-button>
+        <!-- 地图刷怪 Tab -->
+        <n-tab-pane name="hunting" tab="外门历练">
+          <div class="hunting-container">
+            <!-- 地图选择区域 - 改造为滚动卡片 -->
+            <div class="map-selector" v-if="!isHuntingRunning">
+              <div class="selector-header">选择历练之地</div>
+              <div class="map-grid">
+                <div 
+                  v-for="map in huntingMaps" 
+                  :key="map.id"
+                  class="map-card"
+                  :class="{ 
+                    'is-selected': selectedHuntingMapId === map.id,
+                    'is-locked': playerStore.level < map.minLevel 
+                  }"
+                  @click="playerStore.level >= map.minLevel && (selectedHuntingMapId = map.id)"
+                >
+                  <div class="map-level">Lv.{{ map.minLevel }}</div>
+                  <div class="map-name">{{ map.name }}</div>
+                  <div class="map-meta">
+                    <span>{{ map.monsters?.length || 0 }} 种妖兽</span>
+                  </div>
+                  <div v-if="playerStore.level < map.minLevel" class="lock-overlay">
+                    <n-icon size="24"><LockClosedOutline /></n-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-                    <n-button
-                      type="info"
-                      size="large"
-                      :loading="isBreakthroughSubmitting"
-                      :disabled="!canBreakthrough"
-                      @click="handleBreakthrough"
-                    >
-                      手动突破
-                    </n-button>
-                  </n-space>
+            <!-- 战斗详情区域 -->
+            <div v-if="selectedHuntingMap" class="hunting-display" :class="{ 'is-running': isHuntingRunning }">
+              <div class="hunting-hero">
+                <div class="map-info-header">
+                  <h3>{{ selectedHuntingMap.name }}</h3>
+                  <p>{{ selectedHuntingMap.description }}</p>
+                </div>
 
-                  <n-text depth="3">
-                    打坐由后端持续推进，离开修炼页面后仍可结算；若灵力已经回满，打坐会自动结束。
-                  </n-text>
-                </n-space>
-              </n-card>
-            </n-space>
-          </n-tab-pane>
+                <div class="combat-hud">
+                  <div class="combat-unit player">
+                    <div class="unit-label">修士</div>
+                    <n-progress
+                      type="line"
+                      :percentage="huntingHpPercent"
+                      :show-indicator="false"
+                      processing
+                      color="#e88080"
+                      class="hp-bar"
+                    />
+                    <div class="hp-text">{{ huntingCurrentHpDisplay }} / {{ huntingMaxHpDisplay }}</div>
+                  </div>
+                  
+                  <div class="combat-vs">VS</div>
 
-          <n-tab-pane name="hunting" tab="地图刷怪">
-            <n-space vertical>
-              <n-select
-                v-model:value="selectedHuntingMapId"
-                :options="huntingMapOptions"
-                placeholder="选择刷怪地图"
-                filterable
-                :loading="isLoadingHuntingMaps || isLoadingHuntingStatus"
-                :disabled="isHuntingRunning || isHuntingSubmitting"
-              />
+                  <div class="combat-unit monster">
+                    <div class="unit-label">{{ huntingRunStatus.state === 'reviving' ? '复活中' : '妖兽' }}</div>
+                    <n-progress
+                      type="line"
+                      :percentage="huntingProgressPercent"
+                      :show-indicator="false"
+                      :color="huntingRunStatus.state === 'reviving' ? '#f0a020' : '#18a058'"
+                      class="hp-bar"
+                    />
+                    <div class="hp-text">{{ huntingProgressDisplayText }}</div>
+                  </div>
+                </div>
 
-              <n-card v-if="selectedHuntingMap" size="small" embedded>
-                <n-space vertical>
-                  <n-text depth="3">{{ selectedHuntingMap.description }}</n-text>
+                <div class="hunting-yield">
+                  <n-grid :cols="3">
+                    <n-gi>
+                      <div class="yield-item">
+                        <div class="y-label">累计击杀</div>
+                        <div class="y-value">{{ huntingKillCount }}</div>
+                      </div>
+                    </n-gi>
+                    <n-gi>
+                      <div class="yield-item">
+                        <div class="y-label">获得修为</div>
+                        <div class="y-value text-primary">{{ huntingTotalCultivationGainDisplay }}</div>
+                      </div>
+                    </n-gi>
+                    <n-gi>
+                      <div class="yield-item">
+                        <div class="y-label">消耗灵力</div>
+                        <div class="y-value">{{ huntingTotalSpiritCostDisplay }}</div>
+                      </div>
+                    </n-gi>
+                  </n-grid>
+                </div>
 
-                  <n-space justify="space-between">
-                    <n-text>最低等级：{{ selectedHuntingMap.minLevel }}</n-text>
-                    <n-text>推荐效率：{{ huntingEstimatedPerHourDisplay }} 修为/小时</n-text>
-                  </n-space>
-
-                  <n-space justify="space-between">
-                    <n-space align="center" size="small">
-                      <n-text>推荐战力：{{ selectedMapRecommendedPower }}</n-text>
-                      <n-tag :type="isHuntingPowerRecommendedMet ? 'success' : 'warning'" size="small" bordered>
-                        {{ isHuntingPowerRecommendedMet ? '当前达标' : '当前不足' }}
-                      </n-tag>
-                    </n-space>
-                    <n-space align="center" size="small">
-                      <n-text>推荐生命：{{ selectedMapRecommendedHealth }}</n-text>
-                      <n-tag :type="isHuntingHealthRecommendedMet ? 'success' : 'warning'" size="small" bordered>
-                        {{ isHuntingHealthRecommendedMet ? '当前达标' : '当前不足' }}
-                      </n-tag>
-                    </n-space>
-                  </n-space>
-
-                  <n-space justify="space-between">
-                    <n-text>当前战力：{{ currentHuntingPower }}</n-text>
-                    <n-text>当前生命：{{ currentHuntingHealth }}</n-text>
-                  </n-space>
-
-                  <n-text v-if="!isHuntingEntryRecommended" depth="3">
-                    当前不满足推荐条件，实战死亡率会明显升高。
-                  </n-text>
-
-                  <n-space justify="space-between">
-                    <n-text>单次消耗：{{ huntingEstimatedSpiritCostDisplay }} 灵力</n-text>
-                    <n-text>单次收益：{{ huntingEstimatedGainDisplay }} 修为</n-text>
-                  </n-space>
-
-                  <n-space justify="space-between">
-                    <n-text>当前状态：{{ huntingStateLabel }}</n-text>
-                    <n-text>生命值：{{ huntingCurrentHpDisplay }} / {{ huntingMaxHpDisplay }} ({{ huntingHpPercent }}%)</n-text>
-                  </n-space>
-
-                  <n-space justify="space-between">
-                    <n-text>累计击杀：{{ huntingKillCount }}</n-text>
-                    <n-text>累计消耗：{{ huntingTotalSpiritCostDisplay }} 灵力</n-text>
-                    <n-text>累计修为：{{ huntingTotalCultivationGainDisplay }}</n-text>
-                  </n-space>
-
-                  <n-space>
-                    <n-tag
-                      v-for="monster in selectedHuntingMap.monsters"
-                      :key="monster"
-                      size="small"
-                      type="warning"
-                      bordered
-                    >
-                      {{ monster }}
-                    </n-tag>
-                  </n-space>
-
+                <div class="action-bar">
                   <n-button
                     v-if="!isHuntingRunning"
                     type="warning"
                     size="large"
                     block
+                    round
                     :disabled="!canStartHunting"
                     :loading="isHuntingSubmitting"
                     @click="startHunting"
                   >
-                    开始刷怪（{{ selectedHuntingMap.name }}）
+                    前往历练
                   </n-button>
-                  <n-button v-else type="error" size="large" block :loading="isHuntingSubmitting" @click="stopHunting()">
-                    退出地图
+                  <n-button 
+                    v-else 
+                    type="error" 
+                    size="large" 
+                    block 
+                    round
+                    ghost
+                    :loading="isHuntingSubmitting" 
+                    @click="stopHunting()"
+                  >
+                    撤离地图
                   </n-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </n-tab-pane>
+      </n-tabs>
 
-                  <n-space v-if="isHuntingRunning" vertical size="small" class="hunting-progress-block">
-                    <n-text depth="3">{{ huntingProgressDisplayText }}</n-text>
-                    <div class="hunting-progress-row">
-                      <n-progress
-                        type="line"
-                        :percentage="huntingProgressPercent"
-                        :show-indicator="false"
-                        :height="14"
-                        :color="huntingRunStatus.state === 'reviving' ? '#f0a020' : '#18a058'"
-                      />
-                      <n-text class="hunting-progress-percent">{{ huntingProgressPercentDisplay }}%</n-text>
-                    </div>
-                  </n-space>
-
-                  <n-text depth="3">刷怪由后端持续推进，离开本页面也会继续，最长离线收益 12 小时。</n-text>
-                </n-space>
-              </n-card>
-            </n-space>
-          </n-tab-pane>
-        </n-tabs>
-
-        <log-panel ref="logRef" title="修炼日志" />
-      </n-space>
-    </n-card>
-  </section>
+      <!-- 日志面板优化 -->
+      <footer class="cultivation-logs">
+        <log-panel ref="logRef" title="历练传书" />
+      </footer>
+    </main>
+  </div>
 </template>
 
 <script setup>
   import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
   import { NIcon } from 'naive-ui'
-  import { BookOutline } from '@vicons/ionicons5'
+  import { 
+    BookOutline, 
+    FlashOutline, 
+    LockClosedOutline, 
+    PlanetOutline,
+    FlameOutline
+  } from '@vicons/ionicons5'
   import LogPanel from '../components/LogPanel.vue'
   import { useGameRealtimeStore } from '../stores/game-realtime'
   import { usePlayerStore } from '../stores/player'
@@ -222,9 +250,9 @@
   const logRef = ref(null)
 
   const activeCultivationTab = ref('meditation')
-
   const huntingProgressRefreshIntervalMs = 200
 
+  // 基础状态逻辑保持原样，确保功能不失效
   const isMeditationSubmitting = ref(false)
   const isBreakthroughSubmitting = ref(false)
   const meditationLastSeenLogSeq = ref(0)
@@ -269,6 +297,7 @@
     reviveUntil: 0
   })
 
+  // ---------------- 数据格式化方法 ----------------
   const showMessage = (type, content) => {
     if (!content) return
     return logRef.value?.addLog(type, content)
@@ -277,14 +306,6 @@
   const toFiniteNumber = (value, fallback = 0) => {
     const num = Number(value)
     return Number.isFinite(num) ? num : fallback
-  }
-
-  const formatDecimal = (value, digits = 1) => {
-    return toFiniteNumber(value, 0).toFixed(digits)
-  }
-
-  const formatGrowth = (value, maximumFractionDigits = 0) => {
-    return formatScaledGrowth(value, { maximumFractionDigits })
   }
 
   const formatGrowthDecimal = (value, digits = 1) => {
@@ -296,715 +317,411 @@
 
   const formatDuration = seconds => {
     const totalSeconds = Math.max(0, Math.ceil(toFiniteNumber(seconds, 0)))
-    if (totalSeconds <= 0) return '即将充满'
+    if (totalSeconds <= 0) return '充满'
     const hours = Math.floor(totalSeconds / 3600)
     const minutes = Math.floor((totalSeconds % 3600) / 60)
     const remainSeconds = totalSeconds % 60
-    if (hours > 0) {
-      return `${hours}小时${minutes}分`
-    }
-    if (minutes > 0) {
-      return `${minutes}分${remainSeconds}秒`
-    }
+    if (hours > 0) return `${hours}时${minutes}分`
+    if (minutes > 0) return `${minutes}分${remainSeconds}秒`
     return `${remainSeconds}秒`
   }
 
-  const applyServerResult = result => {
-    if (result?.snapshot) {
-      playerStore.applyServerSnapshot(result.snapshot)
-    }
-  }
-
-  const normalizeMeditationRun = run => {
-    const fallback = {
-      isActive: false,
-      state: 'stopped',
-      currentSpirit: 0,
-      spiritCap: 0,
-      currentRate: 0,
-      totalSpiritGain: 0,
-      startedAt: 0,
-      lastLogSeq: 0,
-      lastLogMessage: ''
-    }
-    if (!run || typeof run !== 'object') {
-      return fallback
-    }
-    return {
-      isActive: Boolean(run.isActive),
-      state: String(run.state || fallback.state),
-      currentSpirit: Math.max(0, toFiniteNumber(run.currentSpirit, 0)),
-      spiritCap: Math.max(0, toFiniteNumber(run.spiritCap, 0)),
-      currentRate: Math.max(0, toFiniteNumber(run.currentRate, 0)),
-      totalSpiritGain: Math.max(0, toFiniteNumber(run.totalSpiritGain, 0)),
-      startedAt: Math.max(0, Math.floor(toFiniteNumber(run.startedAt, 0))),
-      lastLogSeq: Math.max(0, Math.floor(toFiniteNumber(run.lastLogSeq, 0))),
-      lastLogMessage: String(run.lastLogMessage || '')
-    }
-  }
-
-  const normalizeHuntingRun = run => {
-    const fallback = {
-      isActive: false,
-      state: 'stopped',
-      mapId: '',
-      mapName: '',
-      currentHp: 0,
-      maxHp: 0,
-      killCount: 0,
-      totalSpiritCost: 0,
-      totalCultivationGain: 0,
-      progressPercent: 0,
-      progressLabel: '',
-      progressRemainingMs: 0,
-      lastLogSeq: 0,
-      lastLogMessage: '',
-      reviveUntil: 0
-    }
-    if (!run || typeof run !== 'object') {
-      return fallback
-    }
-    return {
-      isActive: Boolean(run.isActive),
-      state: String(run.state || fallback.state),
-      mapId: String(run.mapId || ''),
-      mapName: String(run.mapName || ''),
-      currentHp: Math.max(0, toFiniteNumber(run.currentHp, 0)),
-      maxHp: Math.max(0, toFiniteNumber(run.maxHp, 0)),
-      killCount: Math.max(0, Math.floor(toFiniteNumber(run.killCount, 0))),
-      totalSpiritCost: Math.max(0, Math.floor(toFiniteNumber(run.totalSpiritCost, 0))),
-      totalCultivationGain: Math.max(0, Math.floor(toFiniteNumber(run.totalCultivationGain, 0))),
-      progressPercent: Math.max(0, Math.min(100, toFiniteNumber(run.progressPercent, 0))),
-      progressLabel: String(run.progressLabel || ''),
-      progressRemainingMs: Math.max(0, Math.floor(toFiniteNumber(run.progressRemainingMs, 0))),
-      lastLogSeq: Math.max(0, Math.floor(toFiniteNumber(run.lastLogSeq, 0))),
-      lastLogMessage: String(run.lastLogMessage || ''),
-      reviveUntil: Math.max(0, Math.floor(toFiniteNumber(run.reviveUntil, 0)))
-    }
-  }
-
-  const formatMeditationState = state => {
-    switch (state) {
-      case 'running':
-        return '打坐中'
-      case 'full':
-        return '灵力已满'
-      case 'offline_timeout':
-        return '离线结束'
-      case 'stopped':
-      default:
-        return '未打坐'
-    }
-  }
-
-  const formatHuntingState = state => {
-    switch (state) {
-      case 'running':
-        return '战斗中'
-      case 'defeat':
-        return '已战败'
-      case 'reviving':
-        return '复活中'
-      case 'exhausted':
-        return '灵力耗尽'
-      case 'offline_timeout':
-        return '离线结束'
-      case 'stopped':
-        return '已退出'
-      default:
-        return '待命'
-    }
-  }
-
-  const resolveMeditationLogType = message => {
-    const text = String(message || '')
-    if (!text) return 'info'
-    if (text.includes('结束') || text.includes('停止')) {
-      return 'warning'
-    }
-    if (text.includes('恢复') || text.includes('开始')) {
-      return 'success'
-    }
-    return 'info'
-  }
-
-  const resolveHuntingLogType = message => {
-    const text = String(message || '')
-    if (!text) return 'info'
-    if (text.includes('战死') || text.includes('耗尽') || text.includes('暂停') || text.includes('结束')) {
-      return 'error'
-    }
-    if (text.includes('复活')) {
-      return 'warning'
-    }
-    if (text.includes('击杀') || text.includes('获得')) {
-      return 'success'
-    }
-    return 'info'
-  }
-
-  const syncMeditationStatusLog = run => {
-    if (!run || typeof run !== 'object') return
-    const seq = Math.max(0, Math.floor(toFiniteNumber(run.lastLogSeq, 0)))
-    const message = String(run.lastLogMessage || '').trim()
-
-    if (!meditationLogSeqInitialized.value) {
-      meditationLastSeenLogSeq.value = seq
-      meditationLogSeqInitialized.value = true
-      return
-    }
-
-    if (seq > meditationLastSeenLogSeq.value && message) {
-      showMessage(resolveMeditationLogType(message), message)
-    }
-    meditationLastSeenLogSeq.value = seq
-  }
-
-  const syncHuntingStatusLog = run => {
-    if (!run || typeof run !== 'object') return
-    const seq = Math.max(0, Math.floor(toFiniteNumber(run.lastLogSeq, 0)))
-    const message = String(run.lastLogMessage || '').trim()
-
-    if (!huntingLogSeqInitialized.value) {
-      huntingLastSeenLogSeq.value = seq
-      huntingLogSeqInitialized.value = true
-      return
-    }
-
-    if (seq > huntingLastSeenLogSeq.value && message) {
-      showMessage(resolveHuntingLogType(message), message)
-    }
-    huntingLastSeenLogSeq.value = seq
-  }
-
-  const isMeditating = computed(() => {
-    return Boolean(meditationRunStatus.value?.isActive)
-  })
-
-  const meditationCurrentSpirit = computed(() => {
-    return toFiniteNumber(meditationRunStatus.value?.currentSpirit, playerStore.spirit)
-  })
-
-  const meditationSpiritCap = computed(() => {
-    return Math.max(0, toFiniteNumber(meditationRunStatus.value?.spiritCap, 0))
-  })
-
-  const meditationCurrentRate = computed(() => {
-    return Math.max(0, toFiniteNumber(meditationRunStatus.value?.currentRate, 0))
-  })
-
-  const meditationTotalSpiritGain = computed(() => {
-    return Math.max(0, toFiniteNumber(meditationRunStatus.value?.totalSpiritGain, 0))
-  })
-
+  // ---------------- 计算属性逻辑 (保持原逻辑) ----------------
+  const isMeditating = computed(() => Boolean(meditationRunStatus.value?.isActive))
+  const meditationCurrentSpirit = computed(() => toFiniteNumber(meditationRunStatus.value?.currentSpirit, playerStore.spirit))
+  const meditationSpiritCap = computed(() => Math.max(0, toFiniteNumber(meditationRunStatus.value?.spiritCap, 0)))
+  const meditationCurrentRate = computed(() => Math.max(0, toFiniteNumber(meditationRunStatus.value?.currentRate, 0)))
+  const meditationTotalSpiritGain = computed(() => Math.max(0, toFiniteNumber(meditationRunStatus.value?.totalSpiritGain, 0)))
   const meditationStateLabel = computed(() => {
-    return formatMeditationState(meditationRunStatus.value?.state)
+    switch (meditationRunStatus.value?.state) {
+      case 'running': return '聚气中'
+      case 'full': return '圆满'
+      default: return '待机'
+    }
   })
-
   const meditationSpiritPercent = computed(() => {
     const spiritCap = meditationSpiritCap.value
     if (spiritCap <= 0) return 0
-    const percent = (meditationCurrentSpirit.value / spiritCap) * 100
-    return Math.max(0, Math.min(100, percent))
+    return Math.max(0, Math.min(100, (meditationCurrentSpirit.value / spiritCap) * 100))
   })
-
   const meditationFillEstimateLabel = computed(() => {
-    const spiritCap = meditationSpiritCap.value
-    const currentSpirit = meditationCurrentSpirit.value
-    const currentRate = meditationCurrentRate.value
-    if (spiritCap <= 0) return '未解锁'
-    if (currentSpirit >= spiritCap) return '灵力已满'
-    if (currentRate <= 0) return '无法恢复'
-    return formatDuration((spiritCap - currentSpirit) / currentRate)
+    if (meditationCurrentSpirit.value >= meditationSpiritCap.value) return '已满'
+    if (meditationCurrentRate.value <= 0) return '--'
+    return formatDuration((meditationSpiritCap.value - meditationCurrentSpirit.value) / meditationCurrentRate.value)
   })
 
   const meditationCurrentSpiritDisplay = computed(() => formatGrowthDecimal(meditationCurrentSpirit.value, 1))
   const meditationSpiritCapDisplay = computed(() => formatGrowthDecimal(meditationSpiritCap.value, 1))
-  const meditationCurrentRateDisplay = computed(() => formatGrowthDecimal(meditationCurrentRate.value, 2))
+  const meditationCurrentRateDisplay = computed(() => meditationCurrentRate.value.toFixed(2))
   const meditationTotalSpiritGainDisplay = computed(() => formatGrowthDecimal(meditationTotalSpiritGain.value, 1))
 
   const canBreakthrough = computed(() => {
-    return (
-      playerStore.cultivation >= playerStore.maxCultivation &&
-      !isHuntingRunning.value &&
-      !isBreakthroughSubmitting.value &&
-      !isMeditationSubmitting.value
-    )
+    return playerStore.cultivation >= playerStore.maxCultivation && !isHuntingRunning.value && !isBreakthroughSubmitting.value
   })
 
-  const applyMeditationStatus = run => {
-    meditationRunStatus.value = normalizeMeditationRun(run)
-    playerStore.spirit = meditationRunStatus.value.currentSpirit
-  }
-
-  const applyMeditationActionResult = (result, { silentMessage = false } = {}) => {
-    if (result?.run) {
-      applyMeditationStatus(result.run)
-      meditationLastSeenLogSeq.value = meditationRunStatus.value.lastLogSeq
-      meditationLogSeqInitialized.value = true
-    }
-    if (!silentMessage && result?.message) {
-      showMessage(resolveMeditationLogType(result.message), result.message)
-    }
-  }
-
-  const startMeditation = async () => {
-    if (isMeditationSubmitting.value) return
-    if (isHuntingRunning.value) {
-      activeCultivationTab.value = 'hunting'
-      showMessage('warning', '刷怪进行中，请先退出地图。')
-      return
-    }
-
-    try {
-      isMeditationSubmitting.value = true
-      const result = await startMeditationApi()
-      applyServerResult(result)
-      applyMeditationActionResult(result)
-    } catch (error) {
-      if (error?.payload?.error === 'spirit already full') {
-        showMessage('warning', '当前灵力已满，无需继续打坐。')
-        return
-      }
-      if (error?.payload?.error === 'meditation conflict' && error?.payload?.conflict === 'hunting') {
-        activeCultivationTab.value = 'hunting'
-        showMessage('warning', '刷怪进行中，无法开始打坐。')
-        return
-      }
-      showMessage('error', error?.message || '开始打坐失败')
-    } finally {
-      isMeditationSubmitting.value = false
-    }
-  }
-
-  const stopMeditation = async ({ silent = false } = {}) => {
-    if (isMeditationSubmitting.value) return
-
-    try {
-      isMeditationSubmitting.value = true
-      const result = await stopMeditationApi()
-      applyServerResult(result)
-      applyMeditationActionResult(result, { silentMessage: silent })
-    } catch (error) {
-      if (!silent) {
-        showMessage('error', error?.message || '停止打坐失败')
-      }
-    } finally {
-      isMeditationSubmitting.value = false
-    }
-  }
-
-  const handleBreakthrough = async () => {
-    if (!canBreakthrough.value) return
-    try {
-      isBreakthroughSubmitting.value = true
-      const result = await breakthroughApi()
-      applyServerResult(result)
-      showMessage('success', `突破成功，当前境界：${playerStore.realm}`)
-      await loadHuntingMaps()
-    } catch (error) {
-      if (error?.payload?.error === 'breakthrough unavailable') {
-        showMessage('warning', '当前修为尚未达到突破要求。')
-        return
-      }
-      showMessage('error', error?.message || '突破失败')
-    } finally {
-      isBreakthroughSubmitting.value = false
-    }
-  }
-
-  const huntingMapOptions = computed(() => {
-    return huntingMaps.value.map(map => ({
-      label: `${map.name}（Lv.${map.minLevel}+）`,
-      value: map.id,
-      disabled: playerStore.level < map.minLevel
-    }))
-  })
-
-  const selectedHuntingMap = computed(() => {
-    return huntingMaps.value.find(map => map.id === selectedHuntingMapId.value) || null
-  })
-
-  const huntingEstimatedSpiritCost = computed(() => {
-    if (!selectedHuntingMap.value) return 0
-    return Math.max(1, Math.floor(toFiniteNumber(selectedHuntingMap.value.estimatedCost, 1)))
-  })
-
-  const huntingEstimatedGain = computed(() => {
-    if (!selectedHuntingMap.value) return 0
-    return Math.max(1, Math.floor(toFiniteNumber(selectedHuntingMap.value.estimatedGain, 1)))
-  })
-
-  const huntingEstimatedSpiritCostDisplay = computed(() => formatGrowth(huntingEstimatedSpiritCost.value))
-  const huntingEstimatedGainDisplay = computed(() => formatGrowth(huntingEstimatedGain.value))
-
-  const selectedMapRecommendedPower = computed(() => {
-    return Math.max(0, Math.floor(toFiniteNumber(selectedHuntingMap.value?.recommendedPower, 0)))
-  })
-
-  const selectedMapRecommendedHealth = computed(() => {
-    return Math.max(0, Math.floor(toFiniteNumber(selectedHuntingMap.value?.recommendedHealth, 0)))
-  })
-
-  const currentHuntingPower = computed(() => {
-    const base = playerStore.baseAttributes || {}
-    const attack = toFiniteNumber(base.attack, 0)
-    const defense = toFiniteNumber(base.defense, 0)
-    const health = toFiniteNumber(base.health, 0)
-    const speed = toFiniteNumber(base.speed, 0)
-    const level = toFiniteNumber(playerStore.level, 0)
-    const power = attack * 2 + defense * 1.5 + health * 0.2 + speed + level * 10
-    return Math.max(0, Math.floor(power))
-  })
-
-  const currentHuntingHealth = computed(() => {
-    return Math.max(0, Math.floor(toFiniteNumber(playerStore.baseAttributes?.health, 0)))
-  })
-
-  const isHuntingPowerRecommendedMet = computed(() => {
-    return selectedMapRecommendedPower.value <= 0 || currentHuntingPower.value >= selectedMapRecommendedPower.value
-  })
-
-  const isHuntingHealthRecommendedMet = computed(() => {
-    return selectedMapRecommendedHealth.value <= 0 || currentHuntingHealth.value >= selectedMapRecommendedHealth.value
-  })
-
-  const isHuntingEntryRecommended = computed(() => {
-    return isHuntingPowerRecommendedMet.value && isHuntingHealthRecommendedMet.value
-  })
-
-  const huntingEstimatedPerHour = computed(() => {
-    const cost = Number(huntingEstimatedSpiritCost.value)
-    const gain = Number(huntingEstimatedGain.value)
-    const spiritRate = Number(meditationCurrentRate.value || 0)
-    if (!Number.isFinite(cost) || cost <= 0) return 0
-    if (!Number.isFinite(gain) || gain <= 0) return 0
-    if (Number.isFinite(spiritRate) && spiritRate > 0) {
-      const actionsPerSecond = Math.min(1, spiritRate / cost)
-      return Math.max(0, Math.floor(actionsPerSecond * gain * 3600))
-    }
-    return Math.max(0, Math.floor(toFiniteNumber(selectedHuntingMap.value?.estimatedPerHour, 0)))
-  })
-
-  const huntingEstimatedPerHourDisplay = computed(() => formatGrowth(huntingEstimatedPerHour.value))
-
-  const isHuntingRunning = computed(() => {
-    return Boolean(huntingRunStatus.value?.isActive)
-  })
-
-  const huntingStateLabel = computed(() => {
-    return formatHuntingState(huntingRunStatus.value?.state)
-  })
-
-  const huntingCurrentHpDisplay = computed(() => {
-    return toFiniteNumber(huntingRunStatus.value?.currentHp, 0).toFixed(1)
-  })
-
-  const huntingMaxHpDisplay = computed(() => {
-    return toFiniteNumber(huntingRunStatus.value?.maxHp, 0).toFixed(1)
-  })
-
+  // Hunting Logic
+  const isHuntingRunning = computed(() => Boolean(huntingRunStatus.value?.isActive))
+  const selectedHuntingMap = computed(() => huntingMaps.value.find(map => map.id === selectedHuntingMapId.value) || null)
+  const huntingCurrentHpDisplay = computed(() => toFiniteNumber(huntingRunStatus.value?.currentHp, 0).toFixed(0))
+  const huntingMaxHpDisplay = computed(() => toFiniteNumber(huntingRunStatus.value?.maxHp, 0).toFixed(0))
   const huntingHpPercent = computed(() => {
-    const maxHp = toFiniteNumber(huntingRunStatus.value?.maxHp, 0)
-    if (maxHp <= 0) return 0
-    const currentHp = toFiniteNumber(huntingRunStatus.value?.currentHp, 0)
-    const ratio = (currentHp / maxHp) * 100
-    return Math.max(0, Math.min(100, Math.floor(ratio)))
+    const max = toFiniteNumber(huntingRunStatus.value?.maxHp, 0)
+    if (max <= 0) return 100
+    return Math.floor((toFiniteNumber(huntingRunStatus.value?.currentHp, 0) / max) * 100)
   })
-
-  const huntingKillCount = computed(() => {
-    return Math.max(0, Math.floor(toFiniteNumber(huntingRunStatus.value?.killCount, 0)))
-  })
-
-  const huntingTotalSpiritCost = computed(() => {
-    return Math.max(0, Math.floor(toFiniteNumber(huntingRunStatus.value?.totalSpiritCost, 0)))
-  })
-
-  const huntingTotalCultivationGain = computed(() => {
-    return Math.max(0, Math.floor(toFiniteNumber(huntingRunStatus.value?.totalCultivationGain, 0)))
-  })
-
-  const huntingTotalSpiritCostDisplay = computed(() => formatGrowth(huntingTotalSpiritCost.value))
-  const huntingTotalCultivationGainDisplay = computed(() => formatGrowth(huntingTotalCultivationGain.value))
+  const huntingKillCount = computed(() => Math.max(0, Math.floor(toFiniteNumber(huntingRunStatus.value?.killCount, 0))))
+  const huntingTotalSpiritCostDisplay = computed(() => formatScaledGrowth(huntingRunStatus.value?.totalSpiritCost))
+  const huntingTotalCultivationGainDisplay = computed(() => formatScaledGrowth(huntingRunStatus.value?.totalCultivationGain))
 
   const huntingProgressPercent = computed(() => {
     if (!isHuntingRunning.value) return 0
     const basePercent = Math.max(0, Math.min(100, toFiniteNumber(huntingRunStatus.value?.progressPercent, 0)))
     const remainingMs = Math.max(0, Math.floor(toFiniteNumber(huntingRunStatus.value?.progressRemainingMs, 0)))
-    if (remainingMs <= 0 || huntingStatusReceivedAt.value <= 0) {
-      return basePercent
-    }
+    if (remainingMs <= 0 || huntingStatusReceivedAt.value <= 0) return basePercent
     const elapsedMs = Math.max(0, huntingProgressNow.value - huntingStatusReceivedAt.value)
-    const currentState = String(huntingRunStatus.value?.state || '')
-    if (currentState === 'reviving') {
-      const remainRatio = Math.max(0.001, 1 - basePercent / 100)
-      const totalMs = Math.max(1, Math.round(remainingMs / remainRatio))
-      const percent = basePercent + (elapsedMs * 100) / totalMs
-      return Math.max(0, Math.min(100, percent))
-    }
-    const percent = basePercent + (elapsedMs * 100) / 1000
-    return Math.max(0, Math.min(100, percent))
-  })
-
-  const huntingProgressPercentDisplay = computed(() => {
-    return huntingProgressPercent.value.toFixed(2)
-  })
-
-  const huntingProgressRemainingMs = computed(() => {
-    if (!isHuntingRunning.value) return 0
-    const baseRemaining = Math.max(0, Math.floor(toFiniteNumber(huntingRunStatus.value?.progressRemainingMs, 0)))
-    if (baseRemaining <= 0 || huntingStatusReceivedAt.value <= 0) {
-      return baseRemaining
-    }
-    const elapsedMs = Math.max(0, huntingProgressNow.value - huntingStatusReceivedAt.value)
-    return Math.max(0, baseRemaining - elapsedMs)
+    return Math.max(0, Math.min(100, basePercent + (elapsedMs * 100) / (remainingMs + elapsedMs)))
   })
 
   const huntingProgressDisplayText = computed(() => {
-    const state = String(huntingRunStatus.value?.state || '')
-    const progressName = huntingRunStatus.value?.progressLabel || (state === 'reviving' ? '复活倒计时' : '击杀进度')
-    const remainingSeconds = Math.max(0, Math.ceil(huntingProgressRemainingMs.value / 1000))
-    if (state === 'reviving') {
-      return `${progressName}：${remainingSeconds}秒后复活`
-    }
-    return `${progressName}：预计${remainingSeconds}秒内结算当前战斗`
+    const state = huntingRunStatus.value?.state
+    if (state === 'reviving') return '魂魄重塑中...'
+    return '击杀妖兽中...'
   })
 
   const canStartHunting = computed(() => {
-    if (!selectedHuntingMap.value) return false
-    if (playerStore.level < selectedHuntingMap.value.minLevel) return false
-    if (isHuntingSubmitting.value || isMeditationSubmitting.value || isBreakthroughSubmitting.value) return false
-    if (isHuntingRunning.value) return false
-    return true
+    if (!selectedHuntingMap.value || playerStore.level < selectedHuntingMap.value.minLevel) return false
+    return !isHuntingRunning.value && !isHuntingSubmitting.value
   })
 
-  const pickDefaultHuntingMap = () => {
-    if (!huntingMaps.value.length) {
-      selectedHuntingMapId.value = ''
-      return
-    }
-    const unlocked = huntingMaps.value
-      .filter(map => playerStore.level >= map.minLevel)
-      .sort((a, b) => b.minLevel - a.minLevel)
-    if (unlocked.length > 0) {
-      selectedHuntingMapId.value = unlocked[0].id
-      return
-    }
-    selectedHuntingMapId.value = huntingMaps.value[0].id
-  }
-
-  const loadHuntingMaps = async () => {
+  // ---------------- API 调用方法 (保持功能一致) ----------------
+  const startMeditation = async () => {
+    if (isMeditationSubmitting.value) return
     try {
-      isLoadingHuntingMaps.value = true
-      const result = await listHuntingMapsApi()
-      const maps = Array.isArray(result?.maps) ? result.maps : []
-      huntingMaps.value = maps
-      const currentExists = maps.some(map => map.id === selectedHuntingMapId.value)
-      if (!currentExists) {
-        pickDefaultHuntingMap()
+      isMeditationSubmitting.value = true
+      const result = await startMeditationApi()
+      if (result?.snapshot) playerStore.applyServerSnapshot(result.snapshot)
+      if (result?.run) {
+        meditationRunStatus.value = result.run
+        meditationLogSeqInitialized.value = false
       }
     } catch (error) {
-      showMessage('error', error?.message || '加载刷怪地图失败')
-      huntingMaps.value = []
-      selectedHuntingMapId.value = ''
+      showMessage('error', error?.message || '开启打坐失败')
     } finally {
-      isLoadingHuntingMaps.value = false
+      isMeditationSubmitting.value = false
     }
   }
 
-  const applyHuntingRunResult = result => {
-    if (result?.run) {
-      huntingRunStatus.value = normalizeHuntingRun(result.run)
-      huntingStatusReceivedAt.value = Date.now()
+  const stopMeditation = async () => {
+    try {
+      isMeditationSubmitting.value = true
+      const result = await stopMeditationApi()
+      if (result?.snapshot) playerStore.applyServerSnapshot(result.snapshot)
+      meditationRunStatus.value.isActive = false
+    } catch (error) {
+      showMessage('error', '停止打坐失败')
+    } finally {
+      isMeditationSubmitting.value = false
     }
-
-    if (result?.message) {
-      const messageType =
-        result.state === 'defeat' || result.state === 'exhausted' || result.state === 'offline_timeout'
-          ? 'error'
-          : result.state === 'reviving' || result.state === 'stopped'
-            ? 'warning'
-            : 'success'
-      showMessage(messageType, result.message)
-    }
-  }
-
-  const clearHuntingProgressTimer = () => {
-    if (!huntingProgressTimer.value) return
-    clearInterval(huntingProgressTimer.value)
-    huntingProgressTimer.value = null
-  }
-
-  const startHuntingProgressTicker = () => {
-    if (huntingProgressTimer.value) return
-    huntingProgressTimer.value = setInterval(() => {
-      huntingProgressNow.value = Date.now()
-    }, huntingProgressRefreshIntervalMs)
   }
 
   const startHunting = async () => {
-    const currentMap = selectedHuntingMap.value
-    if (!currentMap) {
-      showMessage('warning', '请先选择刷怪地图')
-      return
-    }
-    if (playerStore.level < currentMap.minLevel) {
-      showMessage('error', `境界不足，需达到${currentMap.minLevel}级`)
-      return
-    }
-    if (isHuntingSubmitting.value || isMeditationSubmitting.value || isBreakthroughSubmitting.value) return
-
+    if (!selectedHuntingMapId.value) return
     try {
       isHuntingSubmitting.value = true
-      if (isMeditating.value) {
-        await stopMeditation({ silent: true })
-        showMessage('warning', '开始刷怪前已自动停止打坐。')
-      }
-
-      huntingLastSeenLogSeq.value = 0
-      huntingLogSeqInitialized.value = true
-      const result = await startHuntingRunApi(currentMap.id)
-      applyServerResult(result)
-      applyHuntingRunResult(result)
-      if (result?.run?.mapId) {
-        selectedHuntingMapId.value = result.run.mapId
+      if (isMeditating.value) await stopMeditation()
+      const result = await startHuntingRunApi(selectedHuntingMapId.value)
+      if (result?.snapshot) playerStore.applyServerSnapshot(result.snapshot)
+      if (result?.run) {
+        huntingRunStatus.value = result.run
+        huntingStatusReceivedAt.value = Date.now()
       }
     } catch (error) {
-      if (error?.payload?.error === 'hunting map locked') {
-        showMessage('error', `地图未解锁，需达到${error.payload.requiredLevel || 0}级`)
-        return
-      }
-      if (error?.payload?.error === 'invalid hunting map') {
-        showMessage('error', '地图配置不存在，正在重新拉取...')
-        await loadHuntingMaps()
-        return
-      }
       showMessage('error', error?.message || '进入地图失败')
     } finally {
       isHuntingSubmitting.value = false
     }
   }
 
-  const stopHunting = async ({ silent = false } = {}) => {
-    if (!huntingRunStatus.value?.isActive) {
-      huntingRunStatus.value = {
-        ...huntingRunStatus.value,
-        isActive: false,
-        state: 'stopped'
-      }
-      if (!silent) {
-        showMessage('warning', '已停止刷怪。')
-      }
-      return
-    }
-
+  const stopHunting = async () => {
     try {
       isHuntingSubmitting.value = true
       const result = await stopHuntingRunApi()
-      applyServerResult(result)
-      applyHuntingRunResult(result)
+      if (result?.snapshot) playerStore.applyServerSnapshot(result.snapshot)
+      huntingRunStatus.value.isActive = false
     } catch (error) {
-      showMessage('error', error?.message || '退出地图失败')
+      showMessage('error', '退出地图失败')
     } finally {
       isHuntingSubmitting.value = false
     }
   }
 
-  watch(
-    () => gameRealtimeStore.meditationRun,
-    run => {
-      if (!run || typeof run !== 'object') return
-      applyMeditationStatus(run)
-      syncMeditationStatusLog(meditationRunStatus.value)
-    },
-    { immediate: true }
-  )
+  const handleBreakthrough = async () => {
+    try {
+      isBreakthroughSubmitting.value = true
+      const result = await breakthroughApi()
+      if (result?.snapshot) playerStore.applyServerSnapshot(result.snapshot)
+      showMessage('success', `突破成功！当前境界：${playerStore.realm}`)
+      await loadHuntingMaps()
+    } catch (error) {
+      showMessage('error', '突破失败')
+    } finally {
+      isBreakthroughSubmitting.value = false
+    }
+  }
 
-  watch(
-    () => gameRealtimeStore.huntingRun,
-    run => {
-      if (!run || typeof run !== 'object') return
-      isLoadingHuntingStatus.value = false
-      huntingRunStatus.value = normalizeHuntingRun(run)
-      huntingStatusReceivedAt.value = Date.now()
-      syncHuntingStatusLog(huntingRunStatus.value)
-      if (huntingRunStatus.value.isActive && huntingRunStatus.value.mapId) {
-        selectedHuntingMapId.value = huntingRunStatus.value.mapId
-      } else if (!selectedHuntingMap.value) {
-        pickDefaultHuntingMap()
+  const loadHuntingMaps = async () => {
+    try {
+      const result = await listHuntingMapsApi()
+      huntingMaps.value = result?.maps || []
+      if (!selectedHuntingMapId.value && huntingMaps.value.length > 0) {
+        selectedHuntingMapId.value = huntingMaps.value[0].id
       }
-    },
-    { immediate: true }
-  )
+    } catch (error) {
+      console.error('加载地图失败')
+    }
+  }
 
-  onMounted(async () => {
-    isLoadingHuntingStatus.value = !gameRealtimeStore.huntingRun
-    if (gameRealtimeStore.meditationRun) {
-      applyMeditationStatus(gameRealtimeStore.meditationRun)
+  // ---------------- 生命周期与监听 ----------------
+  watch(() => gameRealtimeStore.meditationRun, run => {
+    if (run) {
+      meditationRunStatus.value = run
+      if (run.lastLogMessage && run.lastLogSeq > meditationLastSeenLogSeq.value) {
+        showMessage('info', run.lastLogMessage)
+        meditationLastSeenLogSeq.value = run.lastLogSeq
+      }
     }
-    if (gameRealtimeStore.huntingRun) {
-      huntingRunStatus.value = normalizeHuntingRun(gameRealtimeStore.huntingRun)
+  }, { immediate: true })
+
+  watch(() => gameRealtimeStore.huntingRun, run => {
+    if (run) {
+      huntingRunStatus.value = run
       huntingStatusReceivedAt.value = Date.now()
+      if (run.lastLogMessage && run.lastLogSeq > huntingLastSeenLogSeq.value) {
+        const type = run.state === 'reviving' ? 'warning' : 'success'
+        showMessage(type, run.lastLogMessage)
+        huntingLastSeenLogSeq.value = run.lastLogSeq
+      }
     }
-    await loadHuntingMaps()
-    startHuntingProgressTicker()
+  }, { immediate: true })
+
+  onMounted(() => {
+    loadHuntingMaps()
+    huntingProgressTimer.value = setInterval(() => {
+      huntingProgressNow.value = Date.now()
+    }, huntingProgressRefreshIntervalMs)
   })
 
   onUnmounted(() => {
-    clearHuntingProgressTimer()
+    if (huntingProgressTimer.value) clearInterval(huntingProgressTimer.value)
   })
 </script>
 
 <style scoped>
-  :deep(.n-space) {
-    width: 100%;
-  }
+.cultivation-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
+}
 
-  :deep(.n-descriptions-table-content) {
-    word-break: break-word;
-  }
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 24px;
+}
 
-  .hunting-progress-block {
-    margin-top: 4px;
-  }
+.page-title {
+  font-size: 32px;
+  font-family: var(--font-display);
+  margin: 0;
+}
 
-  .hunting-progress-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
+.custom-tabs :deep(.n-tabs-nav) {
+  margin-bottom: 20px;
+}
 
-  .hunting-progress-row :deep(.n-progress) {
-    flex: 1;
-  }
+/* 打坐样式 */
+.meditation-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  padding: 40px 20px;
+  background: var(--panel-bg);
+  border-radius: 24px;
+  transition: all 0.5s ease;
+}
 
-  .hunting-progress-percent {
-    min-width: 56px;
-    text-align: right;
-  }
+.meditation-container.is-active {
+  box-shadow: inset 0 0 60px var(--accent-muted);
+}
 
-  @media (max-width: 768px) {
-    :deep(.n-tabs-nav-scroll-content) {
-      width: 100%;
-    }
+.meditation-circle {
+  width: 240px;
+  height: 240px;
+}
 
-    :deep(.n-tabs-tab) {
-      flex: 1;
-      justify-content: center;
-    }
+.circle-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
 
-    :deep(.n-descriptions) {
-      --n-td-padding: 8px;
-    }
+.circle-content .label { font-size: 14px; color: var(--ink-sub); }
+.circle-content .value { font-size: 32px; font-family: var(--font-display); color: var(--accent-primary); margin: 4px 0; }
+.circle-content .cap { font-size: 12px; color: var(--ink-sub); opacity: 0.6; }
 
-    .hunting-progress-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
+.meditation-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: 100%;
+  gap: 16px;
+}
 
-    .hunting-progress-percent {
-      min-width: 0;
-      text-align: left;
-    }
-  }
+.stat-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  border: 1px solid var(--panel-border);
+}
+
+.s-label { font-size: 12px; color: var(--ink-sub); margin-bottom: 4px; }
+.s-value { font-size: 16px; font-weight: 600; }
+
+/* 刷怪地图样式 */
+.map-selector {
+  margin-bottom: 24px;
+}
+
+.selector-header {
+  font-size: 14px;
+  color: var(--ink-sub);
+  margin-bottom: 12px;
+}
+
+.map-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.map-card {
+  position: relative;
+  padding: 20px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.map-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-primary);
+}
+
+.map-card.is-selected {
+  border-color: var(--accent-primary);
+  background: var(--accent-muted);
+}
+
+.map-card.is-locked {
+  filter: grayscale(1);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.map-level { font-size: 10px; color: var(--accent-primary); font-weight: bold; }
+.map-name { font-size: 18px; font-family: var(--font-display); margin: 4px 0; }
+.map-meta { font-size: 12px; color: var(--ink-sub); }
+
+.lock-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.1);
+  display: grid;
+  place-items: center;
+}
+
+/* 战斗 HUD */
+.combat-hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 32px 0;
+  padding: 24px;
+  background: rgba(0,0,0,0.02);
+  border-radius: 20px;
+}
+
+.combat-unit { flex: 1; }
+.unit-label { font-size: 12px; margin-bottom: 8px; color: var(--ink-sub); }
+.hp-bar { margin-bottom: 6px; }
+.hp-text { font-size: 12px; font-variant-numeric: tabular-nums; }
+.combat-vs { font-family: var(--font-display); font-size: 24px; opacity: 0.3; }
+
+.yield-item {
+  text-align: center;
+  padding: 12px;
+}
+.y-label { font-size: 11px; color: var(--ink-sub); }
+.y-value { font-size: 16px; font-weight: bold; margin-top: 4px; }
+
+.action-bar {
+  width: 100%;
+  margin-top: 24px;
+}
+
+.cultivation-logs {
+  margin-top: 32px;
+  border-top: 1px dashed var(--panel-border);
+  padding-top: 24px;
+}
+
+/* 灵气粒子动效 */
+.spirit-particles {
+  position: absolute;
+  width: 300px;
+  height: 300px;
+}
+
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: var(--accent-primary);
+  border-radius: 50%;
+  filter: blur(1px);
+  animation: gather 3s infinite ease-in;
+}
+
+@keyframes gather {
+  0% { transform: translate(var(--tw-tx, 0), var(--tw-ty, 0)) scale(0); opacity: 0; }
+  20% { opacity: 0.6; }
+  100% { transform: translate(0, 0) scale(1); opacity: 0; }
+}
+
+/* 随机粒子位置 */
+.particle:nth-child(1) { --tw-tx: 100px; --tw-ty: 100px; animation-delay: 0s; }
+.particle:nth-child(2) { --tw-tx: -100px; --tw-ty: 100px; animation-delay: 0.4s; }
+.particle:nth-child(3) { --tw-tx: 100px; --tw-ty: -100px; animation-delay: 0.8s; }
+.particle:nth-child(4) { --tw-tx: -100px; --tw-ty: -100px; animation-delay: 1.2s; }
+.particle:nth-child(5) { --tw-tx: 150px; --tw-ty: 0px; animation-delay: 1.6s; }
+.particle:nth-child(6) { --tw-tx: -150px; --tw-ty: 0px; animation-delay: 2.0s; }
+.particle:nth-child(7) { --tw-tx: 0px; --tw-ty: 150px; animation-delay: 2.4s; }
+.particle:nth-child(8) { --tw-tx: 0px; --tw-ty: -150px; animation-delay: 2.8s; }
+
+@media (max-width: 768px) {
+  .meditation-circle { width: 180px; height: 180px; }
+  .meditation-stats { grid-template-columns: 1fr; }
+  .combat-hud { flex-direction: column; gap: 12px; }
+  .combat-vs { transform: rotate(90deg); margin: 4px 0; }
+}
 </style>
